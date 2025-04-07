@@ -25,7 +25,7 @@ Adicione o pacote ao seu `pubspec.yaml`:
 dependencies:
   innovare_core:
     git:
-      url: https://github.com/InnovareTech/lib-innv-core.git
+      url: git@github.com:innovare-tech/lib-innv-core.git
       ref: main
 ```
 
