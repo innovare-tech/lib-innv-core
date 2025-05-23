@@ -17,6 +17,8 @@ extension GetResponseExtensions on Response {
   bool get isBadRequest => status.code == HttpStatus.badRequest;
   bool get isUnauthorized => status.code == HttpStatus.unauthorized;
   bool get isInternalServerError => status.code == HttpStatus.internalServerError;
+  bool get isCreated => status.code == HttpStatus.created;
+  bool get isNotFound => status.code == HttpStatus.notFound;
 }
 
 class ResponseData {
@@ -214,7 +216,11 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
   }
 
   ResponseData _assertResponse(Response response) {
-    if (response.isOk) {
+    if (response.isNotFound) {
+      throw RestError(response, 'Não conseguimos completar sua solicitação, Tente novamente mais tarde');
+    }
+
+    if (response.isOk || response.isCreated) {
       return _responseToResponseData(response);
     }
 
