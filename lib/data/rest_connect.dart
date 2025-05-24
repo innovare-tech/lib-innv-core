@@ -19,6 +19,7 @@ extension GetResponseExtensions on Response {
   bool get isInternalServerError => status.code == HttpStatus.internalServerError;
   bool get isCreated => status.code == HttpStatus.created;
   bool get isNotFound => status.code == HttpStatus.notFound;
+  bool get isNoContent => status.code == HttpStatus.noContent;
 }
 
 class ResponseData {
@@ -218,6 +219,14 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
   ResponseData _assertResponse(Response response) {
     if (response.isNotFound) {
       throw RestError(response, 'Não conseguimos completar sua solicitação, Tente novamente mais tarde');
+    }
+
+    if (response.isNoContent) {
+      return ResponseData(
+        successful: true,
+        code: 'NO_CONTENT',
+        data: null
+      );
     }
 
     if (response.isOk || response.isCreated) {
