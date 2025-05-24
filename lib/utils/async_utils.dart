@@ -43,6 +43,7 @@ Future<AsyncWrapperResponse<T>> asyncWrapper<T>(
   String? successMessage,
   String? errorMessage,
   bool silent = false,
+  bool showErrorDialog = true,
 }) async {
   silent.ifFalse(() {
     Dialogs.loading().show(loadingMessage);
@@ -63,7 +64,9 @@ Future<AsyncWrapperResponse<T>> asyncWrapper<T>(
       message = e.message as String?;
     }
 
-    Dialogs.notification().error(message ?? e.toString());
+    showErrorDialog.ifTrue(() {
+      Dialogs.notification().error(message ?? e.toString());
+    });
 
     Logger().e(
       message,
