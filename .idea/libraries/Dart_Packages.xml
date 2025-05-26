@@ -135,10 +135,17 @@
             </list>
           </value>
         </entry>
+        <entry key="flutter_web_plugins">
+          <value>
+            <list>
+              <option value="$PROJECT_DIR$/../../../flutter/packages/flutter_web_plugins/lib" />
+            </list>
+          </value>
+        </entry>
         <entry key="get">
           <value>
             <list>
-              <option value="$USER_HOME$/.pub-cache/hosted/pub.dev/get-4.7.2/lib" />
+              <option value="$USER_HOME$/.pub-cache/hosted/pub.dev/get-5.0.0-release-candidate-9.3.2/lib" />
             </list>
           </value>
         </entry>
@@ -400,7 +407,7 @@
       <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/flutter_easyloading-3.0.5/lib" />
       <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/flutter_lints-5.0.0/lib" />
       <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/flutter_spinkit-5.2.1/lib" />
-      <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/get-4.7.2/lib" />
+      <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/get-5.0.0-release-candidate-9.3.2/lib" />
       <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/gradient_borders-1.0.1/lib" />
       <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/http-1.4.0/lib" />
       <root url="file://$USER_HOME$/.pub-cache/hosted/pub.dev/http_parser-4.1.2/lib" />
@@ -437,6 +444,7 @@
       <root url="file://$PROJECT_DIR$/../../../flutter/bin/cache/pkg/sky_engine/lib" />
       <root url="file://$PROJECT_DIR$/../../../flutter/packages/flutter/lib" />
       <root url="file://$PROJECT_DIR$/../../../flutter/packages/flutter_test/lib" />
+      <root url="file://$PROJECT_DIR$/../../../flutter/packages/flutter_web_plugins/lib" />
     </CLASSES>
     <JAVADOC />
     <SOURCES />
