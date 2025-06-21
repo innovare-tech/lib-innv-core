@@ -3,6 +3,8 @@
 // ========================================
 
 import 'dart:async';
+import 'package:innovare_core/data/errors/rest_error.dart';
+
 import 'async_result.dart';
 import 'async_config.dart';
 
@@ -558,14 +560,8 @@ class AsyncExecutor {
       return error.message;
     }
 
-    // Try to extract message from your RestError class
-    if (error.toString().contains('RestError')) {
-      try {
-        // Assuming your RestError has a message property
-        return error.message?.toString() ?? error.toString();
-      } catch (_) {
-        // Fallback if extraction fails
-      }
+    if (error is RestError) {
+      return (error.message as String?) ?? 'Erro desconhecido na requisição: ${error.response.statusCode}';
     }
 
     return error.toString();
