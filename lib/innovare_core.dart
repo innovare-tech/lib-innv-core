@@ -1,5 +1,5 @@
 // ========================================
-// InnovareCore Library
+// InnovareCore Library (FIXED)
 // ========================================
 
 library innovare_core;
@@ -78,7 +78,242 @@ export 'utils/form_validators.dart';
 export 'utils/async_utils.dart';
 
 // ========================================
-// INNOVARE CORE CLASS
+// WRAPPER CLASSES (Fix for static methods)
+// ========================================
+
+/// Wrapper class that delegates to AsyncOperations static methods
+/// This allows InnovareCore.Operations.wrap() to work properly
+class AsyncOperationsWrapper {
+  const AsyncOperationsWrapper();
+
+  /// Wraps an async operation with comprehensive error handling
+  Future<AsyncResult<T>> wrap<T>(
+      Future<T> Function() operation, {
+        String? loadingMessage,
+        String? successMessage,
+        String? errorMessage,
+        bool silent = false,
+        bool showErrorDialog = true,
+        int? retryAttempts,
+        Duration? retryDelay,
+        Duration? timeout,
+        ProgressCallback? progressCallback,
+        CancelToken? cancelToken,
+        bool Function(Exception)? retryWhen,
+        RetryConfig? retryConfig,
+      }) {
+    return AsyncOperations.wrap(
+      operation,
+      loadingMessage: loadingMessage,
+      successMessage: successMessage,
+      errorMessage: errorMessage,
+      silent: silent,
+      showErrorDialog: showErrorDialog,
+      retryAttempts: retryAttempts,
+      retryDelay: retryDelay,
+      timeout: timeout,
+      progressCallback: progressCallback,
+      cancelToken: cancelToken,
+      retryWhen: retryWhen,
+      retryConfig: retryConfig,
+    );
+  }
+
+  /// Safe async operation wrapper
+  Future<AsyncResult<T>> safe<T>(
+      Future<T> Function() operation, {
+        String? loadingMessage,
+        String? successMessage,
+        String? errorMessage,
+        bool silent = false,
+        bool showErrorDialog = true,
+        int? retryAttempts,
+        Duration? retryDelay,
+        Duration? timeout,
+        ProgressCallback? progressCallback,
+        CancelToken? cancelToken,
+        bool Function(Exception)? retryWhen,
+        RetryConfig? retryConfig,
+      }) {
+    return AsyncOperations.safe(
+      operation,
+      loadingMessage: loadingMessage,
+      successMessage: successMessage,
+      errorMessage: errorMessage,
+      silent: silent,
+      showErrorDialog: showErrorDialog,
+      retryAttempts: retryAttempts,
+      retryDelay: retryDelay,
+      timeout: timeout,
+      progressCallback: progressCallback,
+      cancelToken: cancelToken,
+      retryWhen: retryWhen,
+      retryConfig: retryConfig,
+    );
+  }
+
+  /// Run async operation
+  Future<AsyncResult<T>> run<T>(
+      Future<T> Function() operation, {
+        String? loadingMessage,
+        String? successMessage,
+        String? errorMessage,
+        bool silent = false,
+        bool showErrorDialog = true,
+        int? retryAttempts,
+        Duration? retryDelay,
+        Duration? timeout,
+        ProgressCallback? progressCallback,
+        CancelToken? cancelToken,
+        bool Function(Exception)? retryWhen,
+        RetryConfig? retryConfig,
+      }) {
+    return AsyncOperations.run(
+      operation,
+      loadingMessage: loadingMessage,
+      successMessage: successMessage,
+      errorMessage: errorMessage,
+      silent: silent,
+      showErrorDialog: showErrorDialog,
+      retryAttempts: retryAttempts,
+      retryDelay: retryDelay,
+      timeout: timeout,
+      progressCallback: progressCallback,
+      cancelToken: cancelToken,
+      retryWhen: retryWhen,
+      retryConfig: retryConfig,
+    );
+  }
+
+  /// Silent async operation
+  Future<AsyncResult<T>> silent<T>(
+      Future<T> Function() operation, {
+        String? errorMessage,
+        int? retryAttempts,
+        Duration? retryDelay,
+        Duration? timeout,
+        CancelToken? cancelToken,
+        bool Function(Exception)? retryWhen,
+        RetryConfig? retryConfig,
+      }) {
+    return AsyncOperations.silent(
+      operation,
+      errorMessage: errorMessage,
+      retryAttempts: retryAttempts,
+      retryDelay: retryDelay,
+      timeout: timeout,
+      cancelToken: cancelToken,
+      retryWhen: retryWhen,
+      retryConfig: retryConfig,
+    );
+  }
+
+  /// Network-optimized async operation
+  Future<AsyncResult<T>> network<T>(
+      Future<T> Function() operation, {
+        String? loadingMessage,
+        String? successMessage,
+        String? errorMessage,
+        bool silent = false,
+        bool showErrorDialog = true,
+        Duration? timeout,
+        ProgressCallback? progressCallback,
+        CancelToken? cancelToken,
+      }) {
+    return AsyncOperations.network(
+      operation,
+      loadingMessage: loadingMessage,
+      successMessage: successMessage,
+      errorMessage: errorMessage,
+      silent: silent,
+      showErrorDialog: showErrorDialog,
+      timeout: timeout,
+      progressCallback: progressCallback,
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// Parallel operations
+  Future<AsyncResult<List<T>>> parallel<T>(
+      List<Future<T> Function()> operations, {
+        String? loadingMessage,
+        bool silent = false,
+        CancelToken? cancelToken,
+        int? maxConcurrency,
+      }) {
+    return AsyncOperations.parallel(
+      operations,
+      loadingMessage: loadingMessage,
+      silent: silent,
+      cancelToken: cancelToken,
+      maxConcurrency: maxConcurrency,
+    );
+  }
+
+  /// Sequential operations
+  Future<AsyncResult<List<T>>> sequence<T>(
+      List<Future<T> Function()> operations, {
+        String? loadingMessage,
+        bool silent = false,
+        CancelToken? cancelToken,
+        ProgressCallback? progressCallback,
+      }) {
+    return AsyncOperations.sequence(
+      operations,
+      loadingMessage: loadingMessage,
+      silent: silent,
+      cancelToken: cancelToken,
+      progressCallback: progressCallback,
+    );
+  }
+
+  /// Create delay
+  Future<AsyncResult<void>> delay(
+      Duration duration, {
+        CancelToken? cancelToken,
+        String? message,
+      }) {
+    return AsyncOperations.delay(
+      duration,
+      cancelToken: cancelToken,
+      message: message,
+    );
+  }
+
+  /// Configure the async operations
+  void configure({
+    required LoadingManager loadingManager,
+    required NotificationManager notificationManager,
+    void Function(String, Object, StackTrace?)? logger,
+    AsyncConfig? config,
+  }) {
+    AsyncOperations.configure(
+      loadingManager: loadingManager,
+      notificationManager: notificationManager,
+      logger: logger,
+      config: config,
+    );
+  }
+
+  /// Get current configuration
+  AsyncConfig get config => AsyncOperations.config;
+
+  /// Update configuration
+  void updateConfig(AsyncConfig config) {
+    AsyncOperations.updateConfig(config);
+  }
+
+  /// Reset operations
+  void reset() {
+    AsyncOperations.reset();
+  }
+
+  /// Get executor (for advanced usage)
+  AsyncExecutor get executor => AsyncOperations.executor;
+}
+
+// ========================================
+// INNOVARE CORE CLASS (FIXED)
 // ========================================
 
 /// Main class providing access to all InnovareCore modules
@@ -107,7 +342,7 @@ class InnovareCore {
   /// ```dart
   /// final result = await InnovareCore.Operations.wrap(() => apiCall());
   /// ```
-  static AsyncOperations get Operations => AsyncOperations();
+  static const AsyncOperationsWrapper Operations = AsyncOperationsWrapper();
 
   /// Alias for Operations (same functionality)
   ///
@@ -115,7 +350,7 @@ class InnovareCore {
   /// ```dart
   /// final result = await InnovareCore.Async.wrap(() => apiCall());
   /// ```
-  static AsyncOperations get Async => AsyncOperations();
+  static const AsyncOperationsWrapper Async = AsyncOperationsWrapper();
 
   /// Get library version
   static String get version => '1.0.0';
@@ -168,32 +403,32 @@ class InnovareCore {
 }
 
 // ========================================
-// GLOBAL ALIASES
+// GLOBAL ALIASES (Now working correctly)
 // ========================================
 
-/// Short alias for AsyncOperations - focused on operations
+/// Short alias for AsyncOperationsWrapper - focused on operations
 ///
 /// Example:
 /// ```dart
 /// final result = await InnOps.wrap(() => apiCall());
 /// ```
-typedef InnOps = AsyncOperations;
+const InnOps = AsyncOperationsWrapper();
 
-/// Short alias for AsyncOperations - focused on async
+/// Short alias for AsyncOperationsWrapper - focused on async
 ///
 /// Example:
 /// ```dart
 /// final result = await InnAsync.wrap(() => apiCall());
 /// ```
-typedef InnAsync = AsyncOperations;
+const InnAsync = AsyncOperationsWrapper();
 
-/// Short alias for AsyncOperations - focused on safety
+/// Short alias for AsyncOperationsWrapper - focused on safety
 ///
 /// Example:
 /// ```dart
 /// final result = await InnSafe.safe(() => apiCall());
 /// ```
-typedef InnSafe = AsyncOperations;
+const InnSafe = AsyncOperationsWrapper();
 
 // ========================================
 // CONVENIENCE FUNCTIONS
