@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:innovare_core/innovare_logo/innovare_inn_painter.dart';
-import 'package:innovare_core/innovare_logo/innovare_name_painter.dart';
+import 'package:innovare_core/src/innovare_logo/innovare_inn_painter.dart';
+import 'package:innovare_core/src/innovare_logo/innovare_name_painter.dart';
 
 enum InnovareLogoType {
   inn,
