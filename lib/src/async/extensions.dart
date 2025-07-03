@@ -219,6 +219,36 @@ extension AsyncResultExtensions<T> on Future<AsyncResult<T>> {
       );
     }
   }
+
+  /// Extracts the value directly or throws the exception
+  ///
+  /// Example:
+  /// ```dart
+  /// try {
+  ///   final user = await AsyncOperations.wrap(() => getUser()).orThrows();
+  ///   navigateToProfile(user);
+  /// } catch (e) {
+  ///   showErrorDialog(e.toString());
+  /// }
+  /// ```
+  Future<T> orThrows() async {
+    final result = await this;
+    return result.orThrows();
+  }
+
+  /// Extracts the value directly or returns null
+  ///
+  /// Example:
+  /// ```dart
+  /// final user = await AsyncOperations.silent(() => getUser()).orNull();
+  /// if (user != null) {
+  ///   updateUserInfo(user);
+  /// }
+  /// ```
+  Future<T?> orNull() async {
+    final result = await this;
+    return result.orNull();
+  }
 }
 
 /// Extensions for Future to integrate with AsyncOperations

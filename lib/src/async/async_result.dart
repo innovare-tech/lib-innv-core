@@ -124,6 +124,42 @@ abstract class AsyncResult<T> {
       failure: (_, __) => this,
     );
   }
+
+  /// Extracts the value directly or throws the exception
+  /// Perfect for when you want to work with the value directly
+  ///
+  /// Example:
+  /// ```dart
+  /// try {
+  ///   final user = await AsyncOperations.wrap(() => getUser()).orThrows();
+  ///   print('User: ${user.name}');
+  /// } catch (e) {
+  ///   print('Failed to get user: $e');
+  /// }
+  /// ```
+  T orThrows() {
+    return when(
+      success: (data) => data,
+      failure: (error, exception) => throw exception ?? Exception(error),
+    );
+  }
+
+  /// Extracts the value directly or returns null
+  /// Useful for optional operations
+  ///
+  /// Example:
+  /// ```dart
+  /// final user = await AsyncOperations.silent(() => getUser()).orNull();
+  /// if (user != null) {
+  ///   print('User: ${user.name}');
+  /// }
+  /// ```
+  T? orNull() {
+    return when(
+      success: (data) => data,
+      failure: (_, __) => null,
+    );
+  }
 }
 
 /// Represents a successful async operation result
