@@ -1,6 +1,6 @@
 name: innovare_core
 description: "A Core innovare library"
-version: 2.0.0
+version: 2.0.1
 homepage: https://hub.innv.dev
 
 environment:

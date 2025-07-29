@@ -218,7 +218,7 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
 
   ResponseData _assertResponse(Response response) {
     if (response.isNotFound) {
-      throw RestError(response, 'Não conseguimos completar sua solicitação, Tente novamente mais tarde');
+      _throwsCorrectNotFoundError(response);
     }
 
     if (response.isNoContent) {
@@ -244,5 +244,25 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
 
   ResponseData _responseToResponseData(Response response) {
     return ResponseData.fromJson(response.body);
+  }
+
+  void _throwsCorrectNotFoundError(Response response) {
+    final body = response.body;
+
+    if (body is Map<String, dynamic>) {
+      final isResponseData = body.containsKey('successful') &&
+        body.containsKey('errorMessage') &&
+        body.containsKey('code');
+
+      if (isResponseData) {
+        final responseData = ResponseData.fromJson(body);
+        throw RestError(response, responseData.message);
+      }
+
+      final errorMessage = body['errorMessage'] ?? 'Unknown error';
+      throw RestError(response, errorMessage);
+    } else {
+      throw RestError(response, 'Unknown error');
+    }
   }
 }
