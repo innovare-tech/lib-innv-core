@@ -17,6 +17,7 @@ extension GetResponseExtensions on Response {
   bool get isBadRequest => status.code == HttpStatus.badRequest;
   bool get isUnauthorized => status.code == HttpStatus.unauthorized;
   bool get isInternalServerError => status.code == HttpStatus.internalServerError;
+  bool get isNotFound => status.code == HttpStatus.notFound;
 }
 
 class ResponseData {
@@ -222,6 +223,15 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
       throw UnknownRestError(response);
     }
 
+    if (response.isNotFound) {
+      final responseDataNotFound = _notFoundResponseToResponseData(response);
+
+      throw RestError(
+        response,
+        responseDataNotFound.errorMessage,
+      );
+    }
+
     final responseData = _responseToResponseData(response);
 
     throw RestError(response, responseData.message);
@@ -229,5 +239,37 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
 
   ResponseData _responseToResponseData(Response response) {
     return ResponseData.fromJson(response.body);
+  }
+
+  ResponseData _notFoundResponseToResponseData(Response response) {
+    final data = response.body;
+
+    if (data is Map<String, dynamic>) {
+      final isResponseData = data.containsKey('successful') &&
+        data.containsKey('code') &&
+        data.containsKey('data');
+
+      if (isResponseData) {
+        return ResponseData.fromJson(data);
+      }
+
+      return ResponseData(
+        successful: false,
+        errorMessage: data['errorMessage'] ?? 'Resource not found',
+        code: data['code'] ?? 'not_found',
+      );
+    } else if (data is String) {
+      return ResponseData(
+        successful: false,
+        errorMessage: data,
+        code: 'not_found',
+      );
+    } else {
+      return ResponseData(
+        successful: false,
+        errorMessage: 'Resource not found',
+        code: 'not_found',
+      );
+    }
   }
 }
