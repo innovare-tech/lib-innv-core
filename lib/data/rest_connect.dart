@@ -1,8 +1,13 @@
+import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart'; // Para kDebugMode
 import 'package:get/get.dart';
+import 'package:get/get_connect/http/src/request/request.dart';
 import 'package:http/http.dart' as http;
+import 'package:logger/logger.dart';
+
+// Seus imports da Lib
 import 'package:innovare_core/data/auth_manager.dart';
 import 'package:innovare_core/data/errors/rest_error.dart';
 import 'package:innovare_core/data/errors/unknown_rest_error.dart';
@@ -11,17 +16,19 @@ import 'package:innovare_core/data/rest_context.dart';
 import 'package:innovare_core/data/rest_options.dart';
 import 'package:innovare_core/data/upload_resource_dto.dart';
 import 'package:innovare_core/extensions/generic_extensions.dart';
-import 'package:logger/logger.dart';
 
+// --- Extensions Úteis (Mantidas e expandidas) ---
 extension GetResponseExtensions on Response {
   bool get isBadRequest => status.code == HttpStatus.badRequest;
   bool get isUnauthorized => status.code == HttpStatus.unauthorized;
+  bool get isForbidden => status.code == HttpStatus.forbidden;
   bool get isInternalServerError => status.code == HttpStatus.internalServerError;
   bool get isCreated => status.code == HttpStatus.created;
   bool get isNotFound => status.code == HttpStatus.notFound;
   bool get isNoContent => status.code == HttpStatus.noContent;
 }
 
+// --- Wrapper de Resposta Padronizada ---
 class ResponseData {
   final bool successful;
   final String? errorMessage;
@@ -39,45 +46,94 @@ class ResponseData {
 
   factory ResponseData.fromJson(Map<String, dynamic> json) {
     return ResponseData(
-      successful: json['successful'],
-      errorMessage: json['errorMessage'],
-      detailedErrorMessage: json['detailedErrorMessage'],
-      code: json['code'],
-      data: json['data']
+        successful: json['successful'] ?? false,
+        errorMessage: json['errorMessage'],
+        detailedErrorMessage: json['detailedErrorMessage'],
+        code: json['code'] ?? '',
+        data: json['data']
     );
   }
 
-  String get message => detailedErrorMessage ?? errorMessage  ?? 'Unknown error';
+  String get message => detailedErrorMessage ?? errorMessage  ?? 'Erro desconhecido';
 }
 
 abstract class RestConnect<T extends RestContext> extends GetConnect {
   final T context;
   final AuthManager? _authManager;
+  final _logger = Logger();
+
+  // Controle de concorrência para o refresh token
+  bool _isRefreshing = false;
 
   RestOptions get defaultOptions => RestOptions(
-    timeout: 30.seconds,
+    timeout: const Duration(seconds: 30),
   );
-
-  final _logger = Logger();
 
   RestConnect(this.context, [this._authManager]) {
     httpClient.baseUrl = context.uri();
 
     final restOptions = context.options().orElse(defaultOptions);
-    httpClient.timeout = restOptions.timeout.orElse(30.seconds);
-    //
-    // httpClient.addRequestModifier<dynamic>((request) async {
-    //   _logger.i('[REQUEST]');
-    //   _logger.i('--> ${request.method} ${request.url}');
-    //   if (request.headers.isNotEmpty) {
-    //     _logger.i('Headers: ${request.headers}');
-    //   }
-    //   // if (request.body != null) {
-    //   //   _logger.i('Body: ${request.body}');
-    //   // }
-    //   return request;
-    // });
+    httpClient.timeout = restOptions.timeout.orElse(const Duration(seconds: 30));
+
+    // 1. Logging de Requisição
+    httpClient.addRequestModifier<dynamic>((request) async {
+      if (kDebugMode) _logger.i('--> ${request.method} ${request.url}');
+      return request;
+    });
+
+    // 2. Logging de Resposta
+    httpClient.addResponseModifier((request, response) {
+      if (kDebugMode) {
+        final status = response.statusText ?? response.statusCode.toString();
+        if (response.isOk) {
+          _logger.i('<-- ${response.statusCode} ${request.url}');
+        } else {
+          _logger.e('<-- ${response.statusCode} ${request.url} | $status');
+        }
+      }
+      return response;
+    });
+
+    // 3. Autenticação Automática (Refresh Token) CORRIGIDO 🚀
+    // O método correto é addAuthenticator. Ele é chamado quando a resposta é 401.
+    httpClient.addAuthenticator<dynamic>((Request request) async {
+      _logger.w('[AUTH] 401 detectado. Iniciando tentativa de refresh...');
+
+      if (_authManager == null) return request;
+
+      // Evita loops ou chamadas concorrentes
+      if (_isRefreshing) return request;
+      _isRefreshing = true;
+
+      try {
+        // Implemente este método no seu AuthManager para bater na API de refresh
+        final success = await _authManager.refreshToken();
+
+        if (success) {
+          _logger.i('[AUTH] Token renovado com sucesso.');
+          final newToken = _authManager.getAccessToken();
+
+          // Atualiza o header da requisição que falhou e retorna ela para ser refeita
+          request.headers['Authorization'] = 'Bearer $newToken';
+          return request;
+        } else {
+          _logger.e('[AUTH] Falha na renovação. Logout forçado.');
+          _authManager.logout();
+          return request; // Retorna request original para propagar o erro 401
+        }
+      } catch (e) {
+        _logger.e('[AUTH] Erro crítico durante refresh: $e');
+        return request;
+      } finally {
+        _isRefreshing = false;
+      }
+    });
+
+    // Limite de tentativas para evitar loop infinito de 401
+    httpClient.maxAuthRetries = 1;
   }
+
+  // --- Métodos HTTP Refatorados com Tratamento Centralizado ---
 
   Future<ResponseData> doPOST(String uri, {
     dynamic body,
@@ -87,14 +143,14 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     bool requiresAuth = true,
   }) async {
     final response = await post(
-      uri,
-      body,
-      contentType: contentType,
-      headers: _completeHeaders(headers, requiresAuth),
-      query: params
+        uri,
+        body,
+        contentType: contentType,
+        headers: _completeHeaders(headers, requiresAuth),
+        query: params
     );
 
-    return _assertResponse(response);
+    return _handleResponse(response);
   }
 
   Future<ResponseData> doPUT(String uri, {
@@ -105,14 +161,14 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     bool requiresAuth = true,
   }) async {
     final response = await put(
-      uri,
-      body,
-      contentType: contentType,
-      headers: _completeHeaders(headers, requiresAuth),
-      query: params
+        uri,
+        body,
+        contentType: contentType,
+        headers: _completeHeaders(headers, requiresAuth),
+        query: params
     );
 
-    return _assertResponse(response);
+    return _handleResponse(response);
   }
 
   Future<ResponseData> doGET(String uri, {
@@ -122,147 +178,140 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     bool requiresAuth = true,
   }) async {
     final response = await get(
-      uri,
-      contentType: contentType,
-      headers: _completeHeaders(headers, requiresAuth),
-      query: params
+        uri,
+        contentType: contentType,
+        headers: _completeHeaders(headers, requiresAuth),
+        query: params
     );
 
-    return _assertResponse(response);
+    return _handleResponse(response);
   }
 
+  // --- Upload ---
   Future<ResponseData> doPOSTResource(String uri, UploadResourceDTO resource, {
     Map<String, dynamic>? params
   }) async {
     final formData = FormData({
-      "file": MultipartFile(
-        resource.bytes,
-        filename: resource.name
-      )
+      "file": MultipartFile(resource.bytes, filename: resource.name)
     });
-
-    return await doPOST(uri, body: formData);
+    // Reutiliza doPOST para ganhar o tratamento de erro e refresh token grátis
+    return await doPOST(uri, body: formData, params: params);
   }
 
+  // --- Download (Com Refresh Manual pois usa http.Client) ---
   Future<ResourceDTO> doGETResource(String uri, {
     Map<String, String>? headers,
     Map<String, dynamic>? params,
     String? contentType,
     bool requiresAuth = true,
   }) async {
-    final finalUri = Uri.parse(httpClient.baseUrl! + uri).replace(queryParameters: params);
+    final baseUrl = httpClient.baseUrl ?? '';
+    final finalUri = Uri.parse(baseUrl + uri).replace(queryParameters: params);
 
-    _logger.i(finalUri);
+    final requestHeaders = _completeHeaders(headers, requiresAuth) ?? {};
+    // Adicione header fixo se necessário, ex: requestHeaders['X-App-Token'] = ...
 
     final client = http.Client();
+    var response = await client.get(finalUri, headers: requestHeaders);
 
-    final response = await client.get(finalUri, headers: {
-      'Authorization': 'F2C0E700-BEAD-467C-92F9-15A1A5AAD5FB',
-    });
+    // Lógica manual de Refresh Token para http.Client
+    if (response.statusCode == HttpStatus.unauthorized && _authManager != null) {
+      _logger.w('[Download] 401 no download. Tentando refresh manual...');
+      final success = await _authManager.refreshToken();
+      if (success) {
+        // Atualiza header e tenta de novo
+        final newToken = _authManager.getAccessToken();
+        requestHeaders['Authorization'] = 'Bearer $newToken';
+        response = await client.get(finalUri, headers: requestHeaders);
+      }
+    }
 
     if (response.statusCode == HttpStatus.ok) {
-      _logger.i(response.headers);
-
       final contentDisposition = response.headers["content-disposition"];
       final fileName = _extractFileName(contentDisposition);
-
       return ResourceDTO(fileName, response.bodyBytes);
     }
 
-    throw FlutterError('Failed to download resource');
+    throw RestError(
+        Response(statusCode: response.statusCode, statusText: response.reasonPhrase),
+        'Falha no download: ${response.statusCode}'
+    );
   }
 
   String _extractFileName(String? contentDisposition) {
     if (contentDisposition != null) {
-      RegExp regex = RegExp(r'filename="(.+)"');
+      RegExp regex = RegExp(r'filename="?([^"]+)"?');
       Match? match = regex.firstMatch(contentDisposition);
-      if (match != null) {
-        return match.group(1) ?? "arquivo_desconhecido.zip";
-      }
+      if (match != null) return match.group(1) ?? "arquivo.bin";
     }
-    return "arquivo_desconhecido.zip";
+    return "arquivo_desconhecido";
   }
 
-  //
-  // Future<Uint8List> _streamToUint8List(Stream<List<int>> stream) async {
-  //   List<int> bytes = [];
-  //   await for (var chunk in stream) {
-  //     bytes.addAll(chunk);
-  //   }
-  //   return Uint8List.fromList(bytes);
-  // }
-
   Map<String, String>? _completeHeaders(Map<String, String>? currentHeaders, bool requiresAuth) {
-    if (currentHeaders == null && !requiresAuth) {
-      return null;
-    }
-
-    if (requiresAuth && _authManager == null) {
-      throw FlutterError('AuthManager is required for this request');
-    }
-
     final headers = currentHeaders ?? {};
-
     if (requiresAuth) {
-      final token = _authManager!.getAccessToken();
+      if (_authManager == null) throw Exception('AuthManager não configurado.');
 
-      if (token.isEmpty) {
-        throw FlutterError('Token is required for this request');
+      final token = _authManager.getAccessToken();
+      if (token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
       }
-
-      headers['Authorization'] = 'Bearer $token';
     }
-
     return headers;
   }
 
-  ResponseData _assertResponse(Response response) {
-    if (response.isNotFound) {
-      _throwsCorrectNotFoundError(response);
+  // --- Tratamento de Erros Elegante ---
+  ResponseData _handleResponse(Response response) {
+    // 1. Sem conexão ou Timeout
+    if (response.status.connectionError) {
+      throw RestError(response, 'Sem conexão com a internet ou servidor inacessível.');
     }
 
-    if (response.isNoContent) {
-      return ResponseData(
-        successful: true,
-        code: 'NO_CONTENT',
-        data: null
-      );
-    }
-
-    if (response.isOk || response.isCreated) {
-      return _responseToResponseData(response);
-    }
-
+    // 2. Erros Críticos (500)
     if (response.isInternalServerError) {
+      _logger.e('Erro 500: ${response.bodyString}');
       throw UnknownRestError(response);
     }
 
-    final responseData = _responseToResponseData(response);
+    // 3. Acesso Negado (401/403)
+    if (response.isUnauthorized) {
+      // Se chegou aqui, o addAuthenticator falhou ou esgotou tentativas
+      throw RestError(response, 'Sessão expirada. Faça login novamente.');
+    }
+    if (response.isForbidden) {
+      throw RestError(response, 'Você não tem permissão para realizar esta ação.');
+    }
 
-    throw RestError(response, responseData.message);
-  }
-
-  ResponseData _responseToResponseData(Response response) {
-    return ResponseData.fromJson(response.body);
-  }
-
-  void _throwsCorrectNotFoundError(Response response) {
-    final body = response.body;
-
-    if (body is Map<String, dynamic>) {
-      final isResponseData = body.containsKey('successful') &&
-        body.containsKey('errorMessage') &&
-        body.containsKey('code');
-
-      if (isResponseData) {
-        final responseData = ResponseData.fromJson(body);
-        throw RestError(response, responseData.message);
+    // 4. Sucesso (2xx)
+    if (response.isOk || response.isCreated) {
+      if (response.body == null) {
+        return ResponseData(successful: true, code: 'OK', data: null);
       }
 
-      final errorMessage = body['errorMessage'] ?? 'Unknown error';
-      throw RestError(response, errorMessage);
-    } else {
-      throw RestError(response, 'Unknown error');
+      // Tenta parsear para nosso formato ResponseData
+      if (response.body is Map<String, dynamic>) {
+        return ResponseData.fromJson(response.body);
+      } else {
+        // Fallback para APIs que retornam JSON puro
+        return ResponseData(successful: true, code: 'OK', data: response.body);
+      }
     }
+
+    // 5. No Content (204)
+    if (response.isNoContent) {
+      return ResponseData(successful: true, code: 'NO_CONTENT', data: null);
+    }
+
+    // 6. Erros de Negócio (400, 404, etc)
+    // Tenta extrair mensagem amigável do backend
+    try {
+      if (response.body is Map<String, dynamic>) {
+        final errorData = ResponseData.fromJson(response.body);
+        throw RestError(response, errorData.message);
+      }
+    } catch (_) {}
+
+    // Fallback final
+    throw RestError(response, response.statusText ?? 'Erro na requisição (${response.statusCode})');
   }
 }
