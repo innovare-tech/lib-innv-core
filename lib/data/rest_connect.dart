@@ -216,6 +216,30 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     return await doPOST(uri, body: formData, params: params);
   }
 
+  // --- Upload Múltiplo (Para listas de arquivos) ---
+  Future<ResponseData> doPOSTResources(String uri, List<UploadResourceDTO> resources, {
+    String fieldName = 'files',
+    Map<String, dynamic>? params,
+    Map<String, String>? bodyFields,
+  }) async {
+
+    final List<MultipartFile> multipartFiles = resources.map((res) {
+      return MultipartFile(res.bytes, filename: res.name);
+    }).toList();
+
+    final Map<String, dynamic> data = {
+      fieldName: multipartFiles,
+    };
+
+    if (bodyFields != null) {
+      data.addAll(bodyFields);
+    }
+
+    final formData = FormData(data);
+
+    return await doPOST(uri, body: formData, params: params);
+  }
+
   // --- Download (Com Refresh Manual pois usa http.Client) ---
   Future<ResourceDTO> doGETResource(String uri, {
     Map<String, String>? headers,
