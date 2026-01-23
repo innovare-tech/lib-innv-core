@@ -6,10 +6,27 @@
   import 'package:toastification/toastification.dart';
 
   abstract class Dialogs {
-    static Loading loading() => Loading();
-    static Notification notification() => Notification();
-    static Custom custom() => Custom();
-    static Confirmation confirmation() => Confirmation();
+    @Deprecated('Use Dialogs.loading instead')
+    static Loading loading() => _loading;
+
+    @Deprecated('Use Dialogs.notification instead')
+    static Notification notification() => _notification;
+
+    @Deprecated('Use Dialogs.customDialog instead')
+    static Custom custom() => _custom;
+
+    @Deprecated('Use Dialogs.confirm instead')
+    static Confirmation confirmation() => _confirmation;
+
+    static Loading get loadingInstance => _loading;
+    static Notification get toast => _notification;
+    static Confirmation get confirm => _confirmation;
+    static Custom get customDialog => _custom;
+
+    static final Loading _loading = Loading();
+    static final Notification _notification = Notification();
+    static final Custom _custom = Custom();
+    static final Confirmation _confirmation = Confirmation();
   }
 
   class Custom {
@@ -43,6 +60,7 @@
       String? title,
     }) {
       _internalShow(
+        title: title,
         message: message,
         type: ToastificationType.success,
         style: ToastificationStyle.fillColored,
@@ -54,6 +72,7 @@
       String? title,
     }) {
       _internalShow(
+        title: title,
         message: message,
         type: ToastificationType.error,
         style: ToastificationStyle.fillColored
@@ -65,6 +84,7 @@
       String? title,
     }) {
       _internalShow(
+        title: title,
         message: message,
         type: ToastificationType.warning,
         style: ToastificationStyle.fillColored
@@ -76,6 +96,7 @@
       String? title,
     }) {
       _internalShow(
+        title: title,
         message: message,
         type: ToastificationType.info,
         style: ToastificationStyle.fillColored
@@ -121,7 +142,7 @@
         okLabel: okLabel,
         cancelLabel: cancelLabel,
         barrierDismissible: false,
-        style: AdaptiveStyle.macOS,
+        style: AdaptiveStyle.adaptive,
         defaultType: OkCancelAlertDefaultType.ok
       );
 
@@ -138,7 +159,7 @@
         context: Get.context!,
         title: title,
         message: message,
-        style: AdaptiveStyle.macOS,
+        style: AdaptiveStyle.adaptive,
         barrierDismissible: false,
       );
     }
@@ -149,7 +170,7 @@
     }) async {
       return await showAlertDialog(
         context: Get.context!,
-        style: AdaptiveStyle.macOS,
+        style: AdaptiveStyle.adaptive,
         title: title,
         message: message,
       );
