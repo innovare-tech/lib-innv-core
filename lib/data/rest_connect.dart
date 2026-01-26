@@ -311,24 +311,49 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
   }
 
   ResponseData _handleResponse(Response response) {
+    // 1. Sem conexão ou Timeout
     if (response.status.connectionError) {
-      throw RestError(
-          response, 'Sem conexão com a internet ou servidor inacessível.');
+      throw RestError(response, 'Sem conexão com a internet ou servidor inacessível.');
     }
 
+    // 2. Erros Críticos (500)
     if (response.isInternalServerError) {
       _logger.e('Erro 500: ${response.bodyString}');
       throw UnknownRestError(response);
     }
 
-    if (response.isUnauthorized) {
-      throw RestError(response, 'Sessão expirada ou credenciais inválidas.');
-    }
-    if (response.isForbidden) {
-      throw RestError(
-          response, 'Você não tem permissão para realizar esta ação.');
+    // 3. Tenta extrair mensagem de erro do body (serve para 400, 401, 404, etc)
+    String? serverMessage;
+    try {
+      if (response.body is Map<String, dynamic>) {
+        final errorData = ResponseData.fromJson(response.body);
+        // Só usamos se tiver uma mensagem válida diferente do default 'Erro desconhecido'
+        if (errorData.message.isNotEmpty && errorData.message != 'Erro desconhecido') {
+          serverMessage = errorData.message;
+        }
+      }
+    } catch (_) {
+      // Falha silenciosa no parse, vamos confiar nos status codes abaixo
     }
 
+    // 4. Acesso Negado (401)
+    if (response.isUnauthorized) {
+      // Prioridade: Mensagem do servidor (ex: "Senha inválida") -> Mensagem genérica
+      throw RestError(
+          response,
+          serverMessage ?? 'Sessão expirada ou credenciais inválidas.'
+      );
+    }
+
+    // 5. Proibido (403)
+    if (response.isForbidden) {
+      throw RestError(
+          response,
+          serverMessage ?? 'Você não tem permissão para realizar esta ação.'
+      );
+    }
+
+    // 6. Sucesso (2xx)
     if (response.isOk || response.isCreated) {
       if (response.body == null) {
         return ResponseData(successful: true, code: 'OK', data: null);
@@ -340,18 +365,17 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
       }
     }
 
+    // 7. No Content (204)
     if (response.isNoContent) {
       return ResponseData(successful: true, code: 'NO_CONTENT', data: null);
     }
 
-    try {
-      if (response.body is Map<String, dynamic>) {
-        final errorData = ResponseData.fromJson(response.body);
-        throw RestError(response, errorData.message);
-      }
-    } catch (_) {}
+    // 8. Outros Erros (400, 404, etc) que já extraímos a mensagem lá em cima
+    if (serverMessage != null) {
+      throw RestError(response, serverMessage);
+    }
 
-    throw RestError(response,
-        response.statusText ?? 'Erro na requisição (${response.statusCode})');
+    // Fallback final
+    throw RestError(response, response.statusText ?? 'Erro na requisição (${response.statusCode})');
   }
 }
