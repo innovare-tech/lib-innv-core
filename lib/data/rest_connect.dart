@@ -214,7 +214,7 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
   Future<ResponseData> doPOSTResource(String uri, UploadResourceDTO resource, {
     String fieldName = 'file',
     Map<String, dynamic>? params,
-    Map<String, String>? bodyFields,
+    Map<String, dynamic>? bodyFields,
   }) async {
     final Map<String, dynamic> data = {
       fieldName: MultipartFile(resource.bytes, filename: resource.name),
