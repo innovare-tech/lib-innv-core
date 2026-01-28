@@ -212,7 +212,7 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
   }
 
   Future<ResponseData> doPOSTResource(String uri, UploadResourceDTO resource, {
-    String fieldName = 'files',
+    String fieldName = 'file',
     Map<String, dynamic>? params,
     Map<String, String>? bodyFields,
   }) async {
