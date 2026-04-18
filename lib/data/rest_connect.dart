@@ -71,7 +71,29 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
   // Header interno para evitar que rotas públicas caiam no loop de refresh
   static const String _skipAuthHeader = 'X-No-Refresh-Retry';
 
-  bool _isRefreshing = false;
+  // Estático para coordenar refresh entre TODOS os providers (evita race condition com Refresh Token Rotation)
+  static bool _isRefreshing = false;
+  static Completer<bool>? _refreshCompleter;
+
+  // Quando o refresh falha terminalmente, marcamos a sessão como "morta" para evitar
+  // loops de 401 -> refresh -> falha em cadeia enquanto as páginas autenticadas ainda
+  // estão montadas. É resetado em [resetSessionState] chamado no login bem-sucedido.
+  static bool _sessionDead = false;
+
+  /// Reseta a flag de sessão morta. Deve ser chamado no login bem-sucedido
+  /// para permitir que o authenticator volte a tentar refresh após uma
+  /// falha terminal anterior na mesma instância do app.
+  static void resetSessionState() {
+    _sessionDead = false;
+  }
+
+  @visibleForTesting
+  static bool get isSessionDead => _sessionDead;
+
+  @visibleForTesting
+  static void debugForceSessionDead() {
+    _sessionDead = true;
+  }
 
   RestOptions get defaultOptions =>
       RestOptions(
@@ -111,15 +133,34 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
         return request;
       }
 
+      // Após uma falha terminal de refresh, pulamos qualquer nova tentativa até o
+      // próximo login (que chama resetSessionState). Isso quebra o loop de
+      // 401 -> refresh -> falha em cadeia enquanto páginas autenticadas disparam
+      // requests em rajada.
+      if (_sessionDead) {
+        _logger.w('[AUTH] Sessão morta. Pulando refresh.');
+        return request;
+      }
+
       _logger.w('[AUTH] 401 detectado. Iniciando tentativa de refresh...');
 
       if (_authManager == null) return request;
-      if (_isRefreshing) return request;
+      if (_isRefreshing && _refreshCompleter != null) {
+        _logger.w('[AUTH] 401 — aguardando refresh em andamento...');
+        final success = await _refreshCompleter!.future;
+        if (success) {
+          final newToken = _authManager.getAccessToken();
+          request.headers['Authorization'] = 'Bearer $newToken';
+        }
+        return request;
+      }
 
       _isRefreshing = true;
+      _refreshCompleter = Completer<bool>();
 
       try {
         final success = await _authManager.refreshToken();
+        _refreshCompleter?.complete(success);
 
         if (success) {
           _logger.i('[AUTH] Token renovado com sucesso.');
@@ -129,14 +170,18 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
           return request;
         } else {
           _logger.e('[AUTH] Falha na renovação. Logout forçado.');
-          _authManager.logout();
+          _sessionDead = true;
+          await _authManager.logout();
           return request;
         }
       } catch (e) {
         _logger.e('[AUTH] Erro crítico durante refresh: $e');
+        _refreshCompleter?.complete(false);
+        _sessionDead = true;
         return request;
       } finally {
         _isRefreshing = false;
+        _refreshCompleter = null;
       }
     });
 
