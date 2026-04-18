@@ -241,6 +241,21 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     return _handleResponse(response);
   }
 
+  Future<ResponseData> doDELETE(String uri, {
+    Map<String, String>? headers,
+    Map<String, dynamic>? params,
+    String? contentType,
+    bool requiresAuth = true,
+  }) async {
+    final response = await delete(
+        uri,
+        contentType: contentType,
+        headers: _completeHeaders(headers, requiresAuth),
+        query: params
+    );
+    return _handleResponse(response);
+  }
+
   Future<ResponseData> doGET(String uri, {
     Map<String, String>? headers,
     Map<String, dynamic>? params,
