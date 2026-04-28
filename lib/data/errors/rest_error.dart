@@ -2,10 +2,12 @@ import 'dart:convert';
 
 import 'package:get/get.dart';
 
-class RestError extends AssertionError {
+class RestError implements Exception {
   final Response response;
 
-  RestError(this.response, super.message);
+  final String? message;
+
+  RestError(this.response, [this.message]);
 
   @override
   String toString() {
