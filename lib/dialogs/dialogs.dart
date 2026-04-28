@@ -42,7 +42,14 @@
   }
 
   class Loading {
+    /// Mostra o overlay de loading global. **Retorna silenciosamente**
+    /// quando o `MaterialApp` ainda não montou (bootstrap / cold-start) —
+    /// `EasyLoading.overlayEntry` é null nesse momento e a chamada
+    /// disparava `Assertion failed: overlayEntry != null` derrubando o
+    /// app inteiro. Após o app render do primeiro frame o overlay fica
+    /// pronto e a chamada volta a funcionar normalmente.
     Future<void> show(String message) async {
+      if (Get.context == null) return;
       EasyLoading.show(status: message);
     }
 
@@ -113,8 +120,19 @@
       BorderRadiusGeometry? borderRadius,
       bool showProgressBar = false,
     }) {
+      // Guard contra `Get.context!` lancar `Unexpected null value`
+      // quando chamado antes do `MaterialApp` montar (bootstrap /
+      // cold-start). Sintoma observado: erro de rede durante o
+      // SessionBootstrap dispara `notificationManager.showError`
+      // -> `Dialogs.notification.error` -> `_internalShow`, que
+      // crasha aqui em null-check e leva o app a tela branca em F5.
+      // Toast nessa janela e' UX redundante (splash ja' cobre) -- e'
+      // seguro suprimir silenciosamente. Apos o primeiro frame o
+      // contexto vira nao-null e os toasts voltam a aparecer.
+      final ctx = Get.context;
+      if (ctx == null) return;
       toastification.show(
-        context: Get.context!,
+        context: ctx,
         type: type,
         style: style,
         title: title.wrapInText(),
