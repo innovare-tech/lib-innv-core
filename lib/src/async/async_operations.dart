@@ -3,6 +3,8 @@
 // ========================================
 
 import 'dart:async';
+import 'package:flutter/foundation.dart';
+import 'package:get/get.dart';
 import 'package:innovare_core/data/errors/rest_error.dart';
 
 import 'async_result.dart';
@@ -54,15 +56,20 @@ class AsyncOperations {
     return _executor!;
   }
 
-  /// Wraps an async operation with comprehensive error handling and features
+  /// Wraps an async operation with comprehensive error handling and features.
   ///
   /// This is the main method for executing async operations safely.
+  ///
+  /// **API preferida**: passe [errorHandling] em vez de `silent` +
+  /// `showErrorDialog` (deprecated). Os aliases legacy continuam
+  /// funcionando sem regressão.
   ///
   /// Example:
   /// ```dart
   /// final result = await AsyncOperations.wrap(
   ///   () => apiService.login(email, password),
   ///   loadingMessage: "Fazendo login...",
+  ///   errorHandling: AsyncErrorHandling.global,
   ///   timeout: Duration(seconds: 15),
   ///   retryAttempts: 2,
   /// );
@@ -77,8 +84,11 @@ class AsyncOperations {
         String? loadingMessage,
         String? successMessage,
         String? errorMessage,
+        @Deprecated('Use errorHandling: AsyncErrorHandling.silent instead')
         bool silent = false,
+        @Deprecated('Use errorHandling: AsyncErrorHandling.inline instead')
         bool showErrorDialog = true,
+        AsyncErrorHandling? errorHandling,
         int? retryAttempts,
         Duration? retryDelay,
         Duration? timeout,
@@ -92,8 +102,11 @@ class AsyncOperations {
       loadingMessage: loadingMessage,
       successMessage: successMessage,
       errorMessage: errorMessage,
+      // ignore: deprecated_member_use_from_same_package
       silent: silent,
+      // ignore: deprecated_member_use_from_same_package
       showErrorDialog: showErrorDialog,
+      errorHandling: errorHandling,
       retryAttempts: retryAttempts,
       retryDelay: retryDelay,
       timeout: timeout,
@@ -117,8 +130,11 @@ class AsyncOperations {
         String? loadingMessage,
         String? successMessage,
         String? errorMessage,
+        @Deprecated('Use errorHandling: AsyncErrorHandling.silent instead')
         bool silent = false,
+        @Deprecated('Use errorHandling: AsyncErrorHandling.inline instead')
         bool showErrorDialog = true,
+        AsyncErrorHandling? errorHandling,
         int? retryAttempts,
         Duration? retryDelay,
         Duration? timeout,
@@ -131,8 +147,11 @@ class AsyncOperations {
     loadingMessage: loadingMessage,
     successMessage: successMessage,
     errorMessage: errorMessage,
+    // ignore: deprecated_member_use_from_same_package
     silent: silent,
+    // ignore: deprecated_member_use_from_same_package
     showErrorDialog: showErrorDialog,
+    errorHandling: errorHandling,
     retryAttempts: retryAttempts,
     retryDelay: retryDelay,
     timeout: timeout,
@@ -153,8 +172,11 @@ class AsyncOperations {
         String? loadingMessage,
         String? successMessage,
         String? errorMessage,
+        @Deprecated('Use errorHandling: AsyncErrorHandling.silent instead')
         bool silent = false,
+        @Deprecated('Use errorHandling: AsyncErrorHandling.inline instead')
         bool showErrorDialog = true,
+        AsyncErrorHandling? errorHandling,
         int? retryAttempts,
         Duration? retryDelay,
         Duration? timeout,
@@ -167,8 +189,11 @@ class AsyncOperations {
     loadingMessage: loadingMessage,
     successMessage: successMessage,
     errorMessage: errorMessage,
+    // ignore: deprecated_member_use_from_same_package
     silent: silent,
+    // ignore: deprecated_member_use_from_same_package
     showErrorDialog: showErrorDialog,
+    errorHandling: errorHandling,
     retryAttempts: retryAttempts,
     retryDelay: retryDelay,
     timeout: timeout,
@@ -178,9 +203,10 @@ class AsyncOperations {
     retryConfig: retryConfig,
   );
 
-  /// Executes operation silently (no loading dialog, no error dialog)
+  /// Executes operation silently (no loading dialog, no error dialog).
   ///
-  /// Useful for background operations
+  /// Useful for background operations. Equivalente semântico a
+  /// `AsyncOperations.wrap(op, errorHandling: AsyncErrorHandling.silent)`.
   ///
   /// Example:
   /// ```dart
@@ -197,8 +223,7 @@ class AsyncOperations {
         RetryConfig? retryConfig,
       }) => wrap(
     operation,
-    silent: true,
-    showErrorDialog: false,
+    errorHandling: AsyncErrorHandling.silent,
     errorMessage: errorMessage,
     retryAttempts: retryAttempts,
     retryDelay: retryDelay,
@@ -219,8 +244,11 @@ class AsyncOperations {
         String? loadingMessage,
         String? successMessage,
         String? errorMessage,
+        @Deprecated('Use errorHandling: AsyncErrorHandling.silent instead')
         bool silent = false,
+        @Deprecated('Use errorHandling: AsyncErrorHandling.inline instead')
         bool showErrorDialog = true,
+        AsyncErrorHandling? errorHandling,
         Duration? timeout,
         ProgressCallback? progressCallback,
         CancelToken? cancelToken,
@@ -229,8 +257,11 @@ class AsyncOperations {
     loadingMessage: loadingMessage,
     successMessage: successMessage,
     errorMessage: errorMessage,
+    // ignore: deprecated_member_use_from_same_package
     silent: silent,
+    // ignore: deprecated_member_use_from_same_package
     showErrorDialog: showErrorDialog,
+    errorHandling: errorHandling,
     timeout: timeout,
     progressCallback: progressCallback,
     cancelToken: cancelToken,
@@ -278,6 +309,7 @@ class AsyncOperations {
         }
       },
       loadingMessage: loadingMessage,
+      // ignore: deprecated_member_use_from_same_package
       silent: silent,
       cancelToken: cancelToken,
     );
@@ -320,6 +352,7 @@ class AsyncOperations {
         return results;
       },
       loadingMessage: loadingMessage,
+      // ignore: deprecated_member_use_from_same_package
       silent: silent,
       cancelToken: cancelToken,
     );
@@ -355,6 +388,7 @@ class AsyncOperations {
 
         return completer.future;
       },
+      // ignore: deprecated_member_use_from_same_package
       silent: true,
       loadingMessage: message,
     );
@@ -387,14 +421,35 @@ class AsyncExecutor {
     this.logger,
   });
 
-  /// Executes an operation with all the enhanced features
+  /// Executes an operation with all the enhanced features.
+  ///
+  /// **Auto-silent durante bootstrap**: detecta `Get.context == null` no
+  /// início e força `effectiveSilent = true` (suprime loading + error
+  /// dialog/toast). Heurística baseada em Flutter+GetX: UI pronta ⇔
+  /// `MaterialApp` montado ⇔ `Get.context` registrado. Apps em
+  /// `SessionBootstrap` (cold-start, hot-reload) chamam APIs antes do
+  /// primeiro frame; sem o auto-silent, `loadingManager.show` →
+  /// `EasyLoading.overlayEntry == null` → assertion failure → tela
+  /// branca. Com o auto-silent, a operação roda normalmente e o caller
+  /// recebe `AsyncFailure`/`AsyncSuccess` sem efeitos colaterais visuais.
+  ///
+  /// **Retrocompat**: `silent`/`showErrorDialog` continuam funcionais.
+  /// O parâmetro [errorHandling] é a forma preferida (mais legível)
+  /// e tem precedência quando passado:
+  ///
+  /// - [AsyncErrorHandling.silent] → `silent: true`
+  /// - [AsyncErrorHandling.global] → `silent: false, showErrorDialog: true`
+  /// - [AsyncErrorHandling.inline] → `silent: false, showErrorDialog: false`
   Future<AsyncResult<T>> execute<T>(
       Future<T> Function() operation, {
         String? loadingMessage,
         String? successMessage,
         String? errorMessage,
+        @Deprecated('Use errorHandling: AsyncErrorHandling.silent instead')
         bool silent = false,
+        @Deprecated('Use errorHandling: AsyncErrorHandling.inline instead')
         bool showErrorDialog = true,
+        AsyncErrorHandling? errorHandling,
         int? retryAttempts,
         Duration? retryDelay,
         Duration? timeout,
@@ -404,6 +459,30 @@ class AsyncExecutor {
         RetryConfig? retryConfig,
       }) async {
     final config = AsyncConfig.instance;
+
+    // Resolve modo efetivo: errorHandling tem precedência sobre os
+    // aliases legacy. Ambos coexistem para retrocompat.
+    final resolvedSilent = errorHandling != null
+        ? errorHandling == AsyncErrorHandling.silent
+        : silent;
+    final resolvedShowErrorDialog = errorHandling != null
+        ? errorHandling == AsyncErrorHandling.global
+        : showErrorDialog;
+
+    // Auto-silent: força supressão de loading/error dialog quando a UI
+    // não está pronta (bootstrap / cold-start). Caller continua
+    // recebendo AsyncFailure/AsyncSuccess normalmente — apenas os
+    // side-effects visuais são desligados.
+    final uiNotReady = Get.context == null;
+    final effectiveSilent = resolvedSilent || uiNotReady;
+    final effectiveShowErrorDialog =
+        resolvedShowErrorDialog && !uiNotReady;
+
+    if (uiNotReady && config.enableLogging) {
+      debugPrint(
+        '[ASYNC] UI não pronta (Get.context == null) — degradando para silent.',
+      );
+    }
 
     // Determine retry configuration
     final effectiveRetryConfig = retryConfig ?? RetryConfig(
@@ -415,7 +494,7 @@ class AsyncExecutor {
     final effectiveTimeout = timeout ?? config.defaultTimeout;
 
     // Show loading if not silent
-    if (!silent && loadingManager != null) {
+    if (!effectiveSilent && loadingManager != null) {
       loadingManager!.show(loadingMessage ?? config.defaultLoadingMessage);
     }
 
@@ -440,7 +519,9 @@ class AsyncExecutor {
       }
 
       // Success handling
-      if (!silent && successMessage != null && notificationManager != null) {
+      if (!effectiveSilent &&
+          successMessage != null &&
+          notificationManager != null) {
         notificationManager!.showSuccess(successMessage);
       }
 
@@ -450,7 +531,9 @@ class AsyncExecutor {
       // Error handling
       final errorMsg = _extractErrorMessage(e, errorMessage);
 
-      if (showErrorDialog && notificationManager != null && !silent) {
+      if (effectiveShowErrorDialog &&
+          notificationManager != null &&
+          !effectiveSilent) {
         notificationManager!.showError(errorMsg);
       }
 
@@ -465,7 +548,7 @@ class AsyncExecutor {
       );
 
     } finally {
-      if (!silent && loadingManager != null) {
+      if (!effectiveSilent && loadingManager != null) {
         loadingManager!.dismiss();
       }
     }

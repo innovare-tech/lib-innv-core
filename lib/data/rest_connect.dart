@@ -231,9 +231,19 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     String? contentType,
     bool requiresAuth = true,
   }) async {
-    final response = await patch(
+    // ⚠️ NÃO usar `patch(uri, body, ...)` direto: o `GetConnect.patch`
+    // serializa o método como `'patch'` lowercase no XHR. O Chromium
+    // NÃO normaliza PATCH para uppercase (só normaliza GET/POST/PUT/
+    // DELETE/HEAD/OPTIONS) — então o preflight envia
+    // `Access-Control-Request-Method: patch`, e o servidor responde
+    // `Access-Control-Allow-Methods: PATCH` (uppercase). A comparação
+    // case-sensitive do browser falha e bloqueia o request real,
+    // resultando em XHR.onError com tudo null. `request()` propaga o
+    // método literalmente — passamos `'PATCH'` uppercase aqui.
+    final response = await request(
         uri,
-        body,
+        'PATCH',
+        body: body,
         contentType: contentType,
         headers: _completeHeaders(headers, requiresAuth),
         query: params
@@ -241,18 +251,38 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     return _handleResponse(response);
   }
 
+  /// `DELETE` com suporte a body opcional (RFC 7231 permite body em
+  /// DELETE; alguns frameworks server-side usam para gating destrutivo
+  /// — ex.: revalidação de senha em `step-up auth`).
+  ///
+  /// Quando `body == null`, mantém o caminho antigo via `delete()` do
+  /// `GetConnect` (preservando retrocompat dos providers existentes que
+  /// passam só headers/query). Quando `body != null`, delega para
+  /// `request()` que aceita body em qualquer verbo HTTP (incluindo
+  /// DELETE).
   Future<ResponseData> doDELETE(String uri, {
+    dynamic body,
     Map<String, String>? headers,
     Map<String, dynamic>? params,
     String? contentType,
     bool requiresAuth = true,
   }) async {
-    final response = await delete(
-        uri,
-        contentType: contentType,
-        headers: _completeHeaders(headers, requiresAuth),
-        query: params
-    );
+    final completedHeaders = _completeHeaders(headers, requiresAuth);
+    final response = body == null
+        ? await delete(
+            uri,
+            contentType: contentType,
+            headers: completedHeaders,
+            query: params,
+          )
+        : await request(
+            uri,
+            'delete',
+            body: body,
+            contentType: contentType,
+            headers: completedHeaders,
+            query: params,
+          );
     return _handleResponse(response);
   }
 

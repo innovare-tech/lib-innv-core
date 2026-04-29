@@ -2,6 +2,13 @@
 // InnovareCore Library (FIXED)
 // ========================================
 
+// As classes Inn* abaixo sao forwarders publicos que repassam
+// `silent`/`showErrorDialog` (deprecated em favor de `AsyncErrorHandling`)
+// para `AsyncOperations.*` sem alteracao semantica. Migracao granular
+// para `errorHandling` esta fora do escopo da task 14.0 -- silenciar
+// avisos aqui evita ruido no `flutter analyze` sem mascarar bugs.
+// ignore_for_file: deprecated_member_use_from_same_package
+
 library innovare_core;
 
 // ========================================

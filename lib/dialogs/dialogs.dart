@@ -30,10 +30,15 @@
   }
 
   class Custom {
+    /// Mostra um dialog customizado. **Retorna `null` silenciosamente**
+    /// quando o `MaterialApp` ainda não montou (bootstrap / cold-start)
+    /// — `Get.dialog` requer `Overlay` ancestral que ainda não existe
+    /// nesse momento. Paridade com `Loading.show` e `Notification._internalShow`.
     Future<T?> show<T>(
       Widget widget, {
         bool barrierDismissible = true
       }) async {
+      if (Get.context == null) return null;
       return await Get.dialog(
         widget,
         barrierDismissible: barrierDismissible,
@@ -146,6 +151,12 @@
   }
 
   class Confirmation {
+    /// Mostra dialog de confirmação ok/cancel. **No-op silencioso**
+    /// quando o `MaterialApp` ainda não montou (bootstrap / cold-start):
+    /// `onOk` NÃO é chamado e o future resolve sem erro. Paridade com
+    /// `Loading.show` e `Notification._internalShow`. Sem o guard, o
+    /// `Get.context!` lançaria `Unexpected null value` derrubando fluxos
+    /// de auto-confirmação em SessionBootstrap.
     Future<void> showOkCancel({
       required String title,
       required String message,
@@ -153,8 +164,10 @@
       String cancelLabel = 'Não',
       required VoidCallback onOk,
     }) async {
+      final ctx = Get.context;
+      if (ctx == null) return;
       final result = await showOkCancelAlertDialog(
-        context: Get.context!,
+        context: ctx,
         title: title,
         message: message,
         okLabel: okLabel,
@@ -169,12 +182,16 @@
       }
     }
 
+    /// Mostra dialog informativo com botão OK. **No-op silencioso**
+    /// quando o `MaterialApp` ainda não montou (bootstrap / cold-start).
     Future<void> showOkDialog({
       required String title,
       required String message,
     }) async {
+      final ctx = Get.context;
+      if (ctx == null) return;
       await showOkAlertDialog(
-        context: Get.context!,
+        context: ctx,
         title: title,
         message: message,
         style: AdaptiveStyle.adaptive,
@@ -182,12 +199,16 @@
       );
     }
 
+    /// Mostra alert dialog genérico. **No-op silencioso** quando o
+    /// `MaterialApp` ainda não montou (bootstrap / cold-start).
     Future<void> showDialog({
       required String title,
       required String message,
     }) async {
+      final ctx = Get.context;
+      if (ctx == null) return;
       return await showAlertDialog(
-        context: Get.context!,
+        context: ctx,
         style: AdaptiveStyle.adaptive,
         title: title,
         message: message,

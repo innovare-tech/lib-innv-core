@@ -300,6 +300,44 @@ class AsyncExceptions {
       UnauthorizedException(message ?? 'Não autorizado');
 }
 
+/// Define como erros de operações async são apresentados ao usuário.
+///
+/// Substitui o par confuso `silent` + `showErrorDialog` por uma única
+/// opção semântica. Aliases legacy continuam funcionais (`@Deprecated`).
+///
+/// Mapeamento de retrocompat:
+///
+/// | Modo                           | Aliases legacy                       |
+/// |--------------------------------|--------------------------------------|
+/// | [AsyncErrorHandling.inline]    | `silent: false, showErrorDialog: false` |
+/// | [AsyncErrorHandling.global]    | `silent: false, showErrorDialog: true`  |
+/// | [AsyncErrorHandling.silent]    | `silent: true` (showErrorDialog ignorado)|
+///
+/// Exemplo:
+/// ```dart
+/// // Antes:
+/// AsyncOperations.wrap(op, silent: false, showErrorDialog: false);
+///
+/// // Depois (mais legível):
+/// AsyncOperations.wrap(op, errorHandling: AsyncErrorHandling.inline);
+/// ```
+enum AsyncErrorHandling {
+  /// Erro retorna como `AsyncFailure` mas NÃO dispara dialog/toast.
+  /// Caller é responsável por exibir o erro inline (ex.: campo de form,
+  /// banner contextual). Loading continua sendo exibido normalmente
+  /// (a menos que [AsyncErrorHandling.silent] seja escolhido).
+  inline,
+
+  /// Erro dispara `notificationManager.showError(msg)` automaticamente
+  /// e retorna `AsyncFailure`. Modo padrão (legacy: `showErrorDialog: true`).
+  global,
+
+  /// Operação totalmente silenciosa: NEM loading NEM error dialog/toast.
+  /// Útil para background sync, polling e qualquer fluxo que não deva
+  /// interromper o usuário. Equivalente a `AsyncOperations.silent(...)`.
+  silent,
+}
+
 /// Enum for different retry strategies
 enum RetryStrategy {
   /// Fixed delay between retries

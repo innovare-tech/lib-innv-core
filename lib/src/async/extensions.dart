@@ -2,6 +2,13 @@
 // extensions.dart (Clean version without duplicated classes)
 // ========================================
 
+// As extensions abaixo sao forwarders legitimos para `AsyncOperations.*`
+// e repassam `silent`/`showErrorDialog` (deprecated em favor de
+// `AsyncErrorHandling`) sem alteracao semantica. Migracao granular
+// para `errorHandling` esta fora do escopo da task 14.0 -- silenciar
+// avisos aqui evita ruido no `flutter analyze` sem mascarar bugs.
+// ignore_for_file: deprecated_member_use_from_same_package
+
 import 'dart:async';
 import 'async_result.dart';
 import 'async_operations.dart';
