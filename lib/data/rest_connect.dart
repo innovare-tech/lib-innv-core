@@ -202,7 +202,7 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
         body,
         contentType: contentType,
         headers: _completeHeaders(headers, requiresAuth),
-        query: params
+        query: _normalizeQuery(params)
     );
     return _handleResponse(response);
   }
@@ -219,7 +219,7 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
         body,
         contentType: contentType,
         headers: _completeHeaders(headers, requiresAuth),
-        query: params
+        query: _normalizeQuery(params)
     );
     return _handleResponse(response);
   }
@@ -246,7 +246,7 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
         body: body,
         contentType: contentType,
         headers: _completeHeaders(headers, requiresAuth),
-        query: params
+        query: _normalizeQuery(params)
     );
     return _handleResponse(response);
   }
@@ -268,12 +268,13 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     bool requiresAuth = true,
   }) async {
     final completedHeaders = _completeHeaders(headers, requiresAuth);
+    final normalizedQuery = _normalizeQuery(params);
     final response = body == null
         ? await delete(
             uri,
             contentType: contentType,
             headers: completedHeaders,
-            query: params,
+            query: normalizedQuery,
           )
         : await request(
             uri,
@@ -281,7 +282,7 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
             body: body,
             contentType: contentType,
             headers: completedHeaders,
-            query: params,
+            query: normalizedQuery,
           );
     return _handleResponse(response);
   }
@@ -296,7 +297,7 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
         uri,
         contentType: contentType,
         headers: _completeHeaders(headers, requiresAuth),
-        query: params
+        query: _normalizeQuery(params)
     );
     return _handleResponse(response);
   }
@@ -347,7 +348,8 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     bool requiresAuth = true,
   }) async {
     final baseUrl = httpClient.baseUrl ?? '';
-    final finalUri = Uri.parse(baseUrl + uri).replace(queryParameters: params);
+    final finalUri =
+        Uri.parse(baseUrl + uri).replace(queryParameters: _normalizeQuery(params));
 
     final requestHeaders = _completeHeaders(headers, requiresAuth) ?? {};
     final client = http.Client();
@@ -387,6 +389,52 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
       if (match != null) return match.group(1) ?? "arquivo.bin";
     }
     return "arquivo_desconhecido";
+  }
+
+  Map<String, dynamic>? _normalizeQuery(Map<String, dynamic>? params) =>
+      normalizeQueryParams(params);
+
+  /// Normaliza valores de query params para o formato aceito por
+  /// `Uri.replace(queryParameters: ...)` — `Map<String, String | Iterable<String>>`.
+  ///
+  /// `GetConnect.get/post/put/...` recebe `Map<String, dynamic>` mas
+  /// internamente repassa para `Uri.replace`, que faz cast estrito de
+  /// cada valor para `String` ou `Iterable<String>`. Passar `int`,
+  /// `num` ou `bool` direto (ex.: `{'page': 1, 'pageSize': 20}`) lança
+  /// `TypeError: 1: type 'int' is not a subtype of type Iterable<dynamic>`
+  /// — exatamente o cenário que motiva este helper.
+  ///
+  /// Comportamento:
+  /// - `null` (map ou map vazio) é retornado inalterado.
+  /// - `value == null`: chave é removida (evita `?foo=null` no path).
+  /// - `String`: mantido como está.
+  /// - `Iterable`: cada elemento é coagido para `String` via `toString`
+  ///   (preserva semântica de multi-value query params, ex.:
+  ///   `?tag=a&tag=b`).
+  /// - Demais tipos primitivos (`int`, `num`, `bool`, `enum`, etc.):
+  ///   coagidos para `String` via `toString()`.
+  ///
+  /// Exposto top-level para permitir testes unitários sem precisar
+  /// instanciar um `RestConnect` concreto.
+  @visibleForTesting
+  static Map<String, dynamic>? normalizeQueryParams(
+      Map<String, dynamic>? params) {
+    if (params == null || params.isEmpty) return params;
+    final out = <String, dynamic>{};
+    params.forEach((key, value) {
+      if (value == null) return;
+      if (value is String) {
+        out[key] = value;
+      } else if (value is Iterable) {
+        out[key] = value
+            .where((e) => e != null)
+            .map((e) => e.toString())
+            .toList();
+      } else {
+        out[key] = value.toString();
+      }
+    });
+    return out;
   }
 
   Map<String, String>? _completeHeaders(Map<String, String>? currentHeaders,
