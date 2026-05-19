@@ -2,21 +2,21 @@ class PaginatedResponseDTO<T> {
   final int page;
   final int total;
   final int totalPages;
-  final int offset;
+  final int limit;
   final List<T> data;
 
   factory PaginatedResponseDTO({
     required int page,
     required int total,
     required int totalPages,
-    required int offset,
+    required int limit,
     required List<T> data
   }) {
     return PaginatedResponseDTO._(
       page: page,
       total: total,
       totalPages: totalPages,
-      offset: offset,
+      limit: limit,
       data: data
     );
   }
@@ -25,7 +25,7 @@ class PaginatedResponseDTO<T> {
     required this.page,
     required this.total,
     required this.totalPages,
-    required this.offset,
+    required this.limit,
     required this.data
   });
 
@@ -34,7 +34,7 @@ class PaginatedResponseDTO<T> {
       page: json['page'],
       total: json['total'],
       totalPages: json['totalPages'],
-      offset: json['offset'],
+      limit: json['limit'],
       data: (json['data'] as List).map((e) => dataMapper(e)).toList()
     );
   }
@@ -44,7 +44,7 @@ class PaginatedResponseDTO<T> {
       page: 1,
       total: 0,
       totalPages: 1,
-      offset: 0,
+      limit: 0,
       data: []
     );
   }

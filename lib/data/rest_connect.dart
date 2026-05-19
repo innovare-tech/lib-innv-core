@@ -1,8 +1,13 @@
+import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
+import 'package:get/get_connect/http/src/request/request.dart';
 import 'package:http/http.dart' as http;
+import 'package:logger/logger.dart';
+
+// Seus imports da Lib
 import 'package:innovare_core/data/auth_manager.dart';
 import 'package:innovare_core/data/errors/rest_error.dart';
 import 'package:innovare_core/data/errors/unknown_rest_error.dart';
@@ -11,13 +16,22 @@ import 'package:innovare_core/data/rest_context.dart';
 import 'package:innovare_core/data/rest_options.dart';
 import 'package:innovare_core/data/upload_resource_dto.dart';
 import 'package:innovare_core/extensions/generic_extensions.dart';
-import 'package:logger/logger.dart';
 
 extension GetResponseExtensions on Response {
   bool get isBadRequest => status.code == HttpStatus.badRequest;
+
   bool get isUnauthorized => status.code == HttpStatus.unauthorized;
-  bool get isInternalServerError => status.code == HttpStatus.internalServerError;
+
+  bool get isForbidden => status.code == HttpStatus.forbidden;
+
+  bool get isInternalServerError =>
+      status.code == HttpStatus.internalServerError;
+
+  bool get isCreated => status.code == HttpStatus.created;
+
   bool get isNotFound => status.code == HttpStatus.notFound;
+
+  bool get isNoContent => status.code == HttpStatus.noContent;
 }
 
 class ResponseData {
@@ -37,45 +51,208 @@ class ResponseData {
 
   factory ResponseData.fromJson(Map<String, dynamic> json) {
     return ResponseData(
-      successful: json['successful'],
-      errorMessage: json['errorMessage'],
-      detailedErrorMessage: json['detailedErrorMessage'],
-      code: json['code'],
-      data: json['data']
+        successful: json['successful'] ?? false,
+        errorMessage: json['errorMessage'],
+        detailedErrorMessage: json['detailedErrorMessage'],
+        code: json['code'] ?? '',
+        data: json['data']
     );
   }
 
-  String get message => detailedErrorMessage ?? errorMessage  ?? 'Unknown error';
+  String get message =>
+      detailedErrorMessage ?? errorMessage ?? 'Erro desconhecido';
 }
 
 abstract class RestConnect<T extends RestContext> extends GetConnect {
   final T context;
   final AuthManager? _authManager;
-
-  RestOptions get defaultOptions => RestOptions(
-    timeout: 30.seconds,
-  );
-
   final _logger = Logger();
+
+  // Header interno para evitar que rotas públicas caiam no loop de refresh
+  static const String _skipAuthHeader = 'X-No-Refresh-Retry';
+
+  // Estático para coordenar refresh entre TODOS os providers (evita race condition com Refresh Token Rotation)
+  static bool _isRefreshing = false;
+  static Completer<bool>? _refreshCompleter;
+
+  // Quando o refresh falha terminalmente, marcamos a sessão como "morta" para evitar
+  // loops de 401 -> refresh -> falha em cadeia enquanto as páginas autenticadas ainda
+  // estão montadas. É resetado em [resetSessionState] chamado no login bem-sucedido.
+  static bool _sessionDead = false;
+
+  /// Reseta a flag de sessão morta. Deve ser chamado no login bem-sucedido
+  /// para permitir que o authenticator volte a tentar refresh após uma
+  /// falha terminal anterior na mesma instância do app.
+  static void resetSessionState() {
+    _sessionDead = false;
+  }
+
+  @visibleForTesting
+  static bool get isSessionDead => _sessionDead;
+
+  @visibleForTesting
+  static void debugForceSessionDead() {
+    _sessionDead = true;
+  }
+
+  /// Cache de body multipart para **replay em retry pós-refresh
+  /// token (401)**.
+  ///
+  /// **Bug do `package:get` 4.7.x que esse cache corrige**: o
+  /// `MultipartFile` (usado em `FormData`) cacheia os bytes lidos
+  /// do arquivo (`_bytes`), mas expõe o conteúdo via `_stream`
+  /// que é um broadcast single-event
+  /// (`Stream.value(_bytes).asBroadcastStream()`). Quando o
+  /// `GetHttpClient._performRequest` faz retry após 401 — chamando
+  /// `handler()` de novo — o handler reusa a mesma instância
+  /// `FormData`, que reusa a mesma `MultipartFile`, que tem o
+  /// `_stream` JÁ DRENADO. `FormData._encode()` yields os
+  /// boundaries mas NADA do conteúdo do arquivo. Resultado: o
+  /// backend recebe um multipart válido porém com `file.buffer`
+  /// de **0 bytes** — erros tipo "Arquivo vazio" no servidor após
+  /// um refresh token bem-sucedido.
+  ///
+  /// **Mitigação**: bufferizamos o body drenado num cache, keyed
+  /// por `method|url`. Em chamadas subsequentes para a mesma key
+  /// dentro de 10s, se o body atual ficou **menor** que o cacheado
+  /// (sinal claro de que o file content foi perdido — boundaries
+  /// ainda estão lá mas o file não), restauramos do cache.
+  ///
+  /// TTL de 1min para evitar leak de buffers grandes. Cobre
+  /// refresh-token (~1s) com folga e nunca persiste sessões.
+  final Map<String, _ReplayableBody> _bodyReplayCache = {};
+
+  RestOptions get defaultOptions =>
+      RestOptions(
+        timeout: const Duration(seconds: 30),
+      );
 
   RestConnect(this.context, [this._authManager]) {
     httpClient.baseUrl = context.uri();
 
     final restOptions = context.options().orElse(defaultOptions);
-    httpClient.timeout = restOptions.timeout.orElse(30.seconds);
-    //
-    // httpClient.addRequestModifier<dynamic>((request) async {
-    //   _logger.i('[REQUEST]');
-    //   _logger.i('--> ${request.method} ${request.url}');
-    //   if (request.headers.isNotEmpty) {
-    //     _logger.i('Headers: ${request.headers}');
-    //   }
-    //   // if (request.body != null) {
-    //   //   _logger.i('Body: ${request.body}');
-    //   // }
-    //   return request;
-    // });
+    httpClient.timeout =
+        restOptions.timeout.orElse(const Duration(seconds: 30));
+
+    // Logging + bufferização do body multipart pra replay-on-401
+    // (ver doc do campo `_bodyReplayCache` acima). Heurística de
+    // tamanho-menor evita falsos positivos em requests JSON
+    // pequenos consecutivos pra mesma URL — drenar funciona normal
+    // para JSON; apenas `MultipartFile` tem o bug do stream cached.
+    httpClient.addRequestModifier<dynamic>((request) async {
+      if (kDebugMode) _logger.i('--> ${request.method} ${request.url}');
+
+      final cacheKey = '${request.method}|${request.url}';
+      final drained = await request.bodyBytes.toBytes();
+      final cached = _bodyReplayCache[cacheKey];
+
+      Uint8List bytes;
+      final isLikelyDrainedRetry = cached != null &&
+          drained.length < cached.bytes.length &&
+          DateTime.now().difference(cached.cachedAt) <
+              const Duration(seconds: 10);
+
+      if (isLikelyDrainedRetry) {
+        _logger.w(
+          '[REPLAY] body multipart drenado detectado em retry para '
+          '$cacheKey — restaurando ${cached.bytes.length}B do cache '
+          '(atual era ${drained.length}B).',
+        );
+        bytes = cached.bytes;
+      } else {
+        bytes = Uint8List.fromList(drained);
+        if (bytes.isNotEmpty) {
+          _bodyReplayCache[cacheKey] = _ReplayableBody(bytes);
+          Timer(
+            const Duration(minutes: 1),
+            () => _bodyReplayCache.remove(cacheKey),
+          );
+        }
+      }
+
+      return request.copyWith(
+        bodyBytes: Stream.fromIterable([bytes]),
+        contentLength: bytes.length,
+      );
+    });
+
+    httpClient.addResponseModifier((request, response) {
+      if (kDebugMode) {
+        final status = response.statusText ?? response.statusCode.toString();
+        if (response.isOk) {
+          _logger.i('<-- ${response.statusCode} ${request.url}');
+        } else {
+          _logger.e('<-- ${response.statusCode} ${request.url} | $status');
+        }
+      }
+      return response;
+    });
+
+    // 3. Autenticação Automática
+    httpClient.addAuthenticator<dynamic>((Request request) async {
+      // SE O HEADER DE BYPASS EXISTIR, RETORNA O REQUEST ORIGINAL (NÃO FAZ REFRESH)
+      if (request.headers.containsKey(_skipAuthHeader)) {
+        _logger.w(
+            '[AUTH] 401 em rota pública ou login/refresh. Ignorando retry.');
+        return request;
+      }
+
+      // Após uma falha terminal de refresh, pulamos qualquer nova tentativa até o
+      // próximo login (que chama resetSessionState). Isso quebra o loop de
+      // 401 -> refresh -> falha em cadeia enquanto páginas autenticadas disparam
+      // requests em rajada.
+      if (_sessionDead) {
+        _logger.w('[AUTH] Sessão morta. Pulando refresh.');
+        return request;
+      }
+
+      _logger.w('[AUTH] 401 detectado. Iniciando tentativa de refresh...');
+
+      if (_authManager == null) return request;
+      if (_isRefreshing && _refreshCompleter != null) {
+        _logger.w('[AUTH] 401 — aguardando refresh em andamento...');
+        final success = await _refreshCompleter!.future;
+        if (success) {
+          final newToken = _authManager.getAccessToken();
+          request.headers['Authorization'] = 'Bearer $newToken';
+        }
+        return request;
+      }
+
+      _isRefreshing = true;
+      _refreshCompleter = Completer<bool>();
+
+      try {
+        final success = await _authManager.refreshToken();
+        _refreshCompleter?.complete(success);
+
+        if (success) {
+          _logger.i('[AUTH] Token renovado com sucesso.');
+          final newToken = _authManager.getAccessToken();
+
+          request.headers['Authorization'] = 'Bearer $newToken';
+          return request;
+        } else {
+          _logger.e('[AUTH] Falha na renovação. Logout forçado.');
+          _sessionDead = true;
+          await _authManager.logout();
+          return request;
+        }
+      } catch (e) {
+        _logger.e('[AUTH] Erro crítico durante refresh: $e');
+        _refreshCompleter?.complete(false);
+        _sessionDead = true;
+        return request;
+      } finally {
+        _isRefreshing = false;
+        _refreshCompleter = null;
+      }
+    });
+
+    httpClient.maxAuthRetries = 1;
   }
+
+  // --- Métodos HTTP ---
 
   Future<ResponseData> doPOST(String uri, {
     dynamic body,
@@ -85,14 +262,13 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     bool requiresAuth = true,
   }) async {
     final response = await post(
-      uri,
-      body,
-      contentType: contentType,
-      headers: _completeHeaders(headers, requiresAuth),
-      query: params
+        uri,
+        body,
+        contentType: contentType,
+        headers: _completeHeaders(headers, requiresAuth),
+        query: _normalizeQuery(params)
     );
-
-    return _assertResponse(response);
+    return _handleResponse(response);
   }
 
   Future<ResponseData> doPUT(String uri, {
@@ -103,14 +279,76 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     bool requiresAuth = true,
   }) async {
     final response = await put(
-      uri,
-      body,
-      contentType: contentType,
-      headers: _completeHeaders(headers, requiresAuth),
-      query: params
+        uri,
+        body,
+        contentType: contentType,
+        headers: _completeHeaders(headers, requiresAuth),
+        query: _normalizeQuery(params)
     );
+    return _handleResponse(response);
+  }
 
-    return _assertResponse(response);
+  Future<ResponseData> doPATCH(String uri, {
+    dynamic body,
+    Map<String, String>? headers,
+    Map<String, dynamic>? params,
+    String? contentType,
+    bool requiresAuth = true,
+  }) async {
+    // ⚠️ NÃO usar `patch(uri, body, ...)` direto: o `GetConnect.patch`
+    // serializa o método como `'patch'` lowercase no XHR. O Chromium
+    // NÃO normaliza PATCH para uppercase (só normaliza GET/POST/PUT/
+    // DELETE/HEAD/OPTIONS) — então o preflight envia
+    // `Access-Control-Request-Method: patch`, e o servidor responde
+    // `Access-Control-Allow-Methods: PATCH` (uppercase). A comparação
+    // case-sensitive do browser falha e bloqueia o request real,
+    // resultando em XHR.onError com tudo null. `request()` propaga o
+    // método literalmente — passamos `'PATCH'` uppercase aqui.
+    final response = await request(
+        uri,
+        'PATCH',
+        body: body,
+        contentType: contentType,
+        headers: _completeHeaders(headers, requiresAuth),
+        query: _normalizeQuery(params)
+    );
+    return _handleResponse(response);
+  }
+
+  /// `DELETE` com suporte a body opcional (RFC 7231 permite body em
+  /// DELETE; alguns frameworks server-side usam para gating destrutivo
+  /// — ex.: revalidação de senha em `step-up auth`).
+  ///
+  /// Quando `body == null`, mantém o caminho antigo via `delete()` do
+  /// `GetConnect` (preservando retrocompat dos providers existentes que
+  /// passam só headers/query). Quando `body != null`, delega para
+  /// `request()` que aceita body em qualquer verbo HTTP (incluindo
+  /// DELETE).
+  Future<ResponseData> doDELETE(String uri, {
+    dynamic body,
+    Map<String, String>? headers,
+    Map<String, dynamic>? params,
+    String? contentType,
+    bool requiresAuth = true,
+  }) async {
+    final completedHeaders = _completeHeaders(headers, requiresAuth);
+    final normalizedQuery = _normalizeQuery(params);
+    final response = body == null
+        ? await delete(
+            uri,
+            contentType: contentType,
+            headers: completedHeaders,
+            query: normalizedQuery,
+          )
+        : await request(
+            uri,
+            'delete',
+            body: body,
+            contentType: contentType,
+            headers: completedHeaders,
+            query: normalizedQuery,
+          );
+    return _handleResponse(response);
   }
 
   Future<ResponseData> doGET(String uri, {
@@ -120,26 +358,51 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     bool requiresAuth = true,
   }) async {
     final response = await get(
-      uri,
-      contentType: contentType,
-      headers: _completeHeaders(headers, requiresAuth),
-      query: params
+        uri,
+        contentType: contentType,
+        headers: _completeHeaders(headers, requiresAuth),
+        query: _normalizeQuery(params)
     );
-
-    return _assertResponse(response);
+    return _handleResponse(response);
   }
 
   Future<ResponseData> doPOSTResource(String uri, UploadResourceDTO resource, {
-    Map<String, dynamic>? params
+    String fieldName = 'file',
+    Map<String, dynamic>? params,
+    Map<String, dynamic>? bodyFields,
   }) async {
-    final formData = FormData({
-      "file": MultipartFile(
-        resource.bytes,
-        filename: resource.name
-      )
-    });
+    final Map<String, dynamic> data = {
+      fieldName: MultipartFile(resource.bytes, filename: resource.name),
+    };
 
-    return await doPOST(uri, body: formData);
+    if (bodyFields != null) {
+      data.addAll(bodyFields);
+    }
+
+    final formData = FormData(data);
+
+    return await doPOST(uri, body: formData, params: params);
+  }
+
+  Future<ResponseData> doPOSTResources(String uri,
+      List<UploadResourceDTO> resources, {
+        String fieldName = 'files',
+        Map<String, dynamic>? params,
+        Map<String, String>? bodyFields,
+      }) async {
+    final List<MultipartFile> multipartFiles = resources.map((res) {
+      return MultipartFile(res.bytes, filename: res.name);
+    }).toList();
+
+    final Map<String, dynamic> data = {
+      fieldName: multipartFiles,
+    };
+    if (bodyFields != null) {
+      data.addAll(bodyFields);
+    }
+    final formData = FormData(data);
+
+    return await doPOST(uri, body: formData, params: params);
   }
 
   Future<ResourceDTO> doGETResource(String uri, {
@@ -148,128 +411,190 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     String? contentType,
     bool requiresAuth = true,
   }) async {
-    final finalUri = Uri.parse(httpClient.baseUrl! + uri).replace(queryParameters: params);
+    final baseUrl = httpClient.baseUrl ?? '';
+    final finalUri =
+        Uri.parse(baseUrl + uri).replace(queryParameters: _normalizeQuery(params));
 
-    _logger.i(finalUri);
-
+    final requestHeaders = _completeHeaders(headers, requiresAuth) ?? {};
     final client = http.Client();
+    var response = await client.get(finalUri, headers: requestHeaders);
 
-    final response = await client.get(finalUri, headers: {
-      'Authorization': 'F2C0E700-BEAD-467C-92F9-15A1A5AAD5FB',
-    });
+    if (response.statusCode == HttpStatus.unauthorized &&
+        _authManager != null) {
+      // Se não requer autenticação, não tenta refresh manual também
+      if (requiresAuth) {
+        _logger.w('[Download] 401 no download. Tentando refresh manual...');
+        final success = await _authManager.refreshToken();
+        if (success) {
+          final newToken = _authManager.getAccessToken();
+          requestHeaders['Authorization'] = 'Bearer $newToken';
+          response = await client.get(finalUri, headers: requestHeaders);
+        }
+      }
+    }
 
     if (response.statusCode == HttpStatus.ok) {
-      _logger.i(response.headers);
-
       final contentDisposition = response.headers["content-disposition"];
       final fileName = _extractFileName(contentDisposition);
-
       return ResourceDTO(fileName, response.bodyBytes);
     }
 
-    throw FlutterError('Failed to download resource');
+    throw RestError(
+        Response(
+            statusCode: response.statusCode, statusText: response.reasonPhrase),
+        'Falha no download: ${response.statusCode}'
+    );
   }
 
   String _extractFileName(String? contentDisposition) {
     if (contentDisposition != null) {
-      RegExp regex = RegExp(r'filename="(.+)"');
+      RegExp regex = RegExp(r'filename="?([^"]+)"?');
       Match? match = regex.firstMatch(contentDisposition);
-      if (match != null) {
-        return match.group(1) ?? "arquivo_desconhecido.zip";
-      }
+      if (match != null) return match.group(1) ?? "arquivo.bin";
     }
-    return "arquivo_desconhecido.zip";
+    return "arquivo_desconhecido";
   }
 
-  //
-  // Future<Uint8List> _streamToUint8List(Stream<List<int>> stream) async {
-  //   List<int> bytes = [];
-  //   await for (var chunk in stream) {
-  //     bytes.addAll(chunk);
-  //   }
-  //   return Uint8List.fromList(bytes);
-  // }
+  Map<String, dynamic>? _normalizeQuery(Map<String, dynamic>? params) =>
+      normalizeQueryParams(params);
 
-  Map<String, String>? _completeHeaders(Map<String, String>? currentHeaders, bool requiresAuth) {
-    if (currentHeaders == null && !requiresAuth) {
-      return null;
-    }
+  /// Normaliza valores de query params para o formato aceito por
+  /// `Uri.replace(queryParameters: ...)` — `Map<String, String | Iterable<String>>`.
+  ///
+  /// `GetConnect.get/post/put/...` recebe `Map<String, dynamic>` mas
+  /// internamente repassa para `Uri.replace`, que faz cast estrito de
+  /// cada valor para `String` ou `Iterable<String>`. Passar `int`,
+  /// `num` ou `bool` direto (ex.: `{'page': 1, 'pageSize': 20}`) lança
+  /// `TypeError: 1: type 'int' is not a subtype of type Iterable<dynamic>`
+  /// — exatamente o cenário que motiva este helper.
+  ///
+  /// Comportamento:
+  /// - `null` (map ou map vazio) é retornado inalterado.
+  /// - `value == null`: chave é removida (evita `?foo=null` no path).
+  /// - `String`: mantido como está.
+  /// - `Iterable`: cada elemento é coagido para `String` via `toString`
+  ///   (preserva semântica de multi-value query params, ex.:
+  ///   `?tag=a&tag=b`).
+  /// - Demais tipos primitivos (`int`, `num`, `bool`, `enum`, etc.):
+  ///   coagidos para `String` via `toString()`.
+  ///
+  /// Exposto top-level para permitir testes unitários sem precisar
+  /// instanciar um `RestConnect` concreto.
+  @visibleForTesting
+  static Map<String, dynamic>? normalizeQueryParams(
+      Map<String, dynamic>? params) {
+    if (params == null || params.isEmpty) return params;
+    final out = <String, dynamic>{};
+    params.forEach((key, value) {
+      if (value == null) return;
+      if (value is String) {
+        out[key] = value;
+      } else if (value is Iterable) {
+        out[key] = value
+            .where((e) => e != null)
+            .map((e) => e.toString())
+            .toList();
+      } else {
+        out[key] = value.toString();
+      }
+    });
+    return out;
+  }
 
-    if (requiresAuth && _authManager == null) {
-      throw FlutterError('AuthManager is required for this request');
-    }
-
+  Map<String, String>? _completeHeaders(Map<String, String>? currentHeaders,
+      bool requiresAuth) {
     final headers = currentHeaders ?? {};
 
     if (requiresAuth) {
-      final token = _authManager!.getAccessToken();
+      if (_authManager == null) throw Exception('AuthManager não configurado.');
 
-      if (token.isEmpty) {
-        throw FlutterError('Token is required for this request');
+      final token = _authManager.getAccessToken();
+      if (token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
       }
-
-      headers['Authorization'] = 'Bearer $token';
+    } else {
+      // INJEÇÃO DA FLAG DE BYPASS
+      // Se não requer auth, também não deve tentar refresh se der 401 (ex: login falhou)
+      headers[_skipAuthHeader] = 'true';
     }
 
     return headers;
   }
 
-  ResponseData _assertResponse(Response response) {
-    if (response.isOk) {
-      return _responseToResponseData(response);
+  ResponseData _handleResponse(Response response) {
+    // 1. Sem conexão ou Timeout
+    if (response.status.connectionError) {
+      throw RestError(response, 'Sem conexão com a internet ou servidor inacessível.');
     }
 
+    // 2. Erros Críticos (500)
     if (response.isInternalServerError) {
+      _logger.e('Erro 500: ${response.bodyString}');
       throw UnknownRestError(response);
     }
 
-    if (response.isNotFound) {
-      final responseDataNotFound = _notFoundResponseToResponseData(response);
-
-      throw RestError(
-        response,
-        responseDataNotFound.errorMessage,
-      );
-    }
-
-    final responseData = _responseToResponseData(response);
-
-    throw RestError(response, responseData.message);
-  }
-
-  ResponseData _responseToResponseData(Response response) {
-    return ResponseData.fromJson(response.body);
-  }
-
-  ResponseData _notFoundResponseToResponseData(Response response) {
-    final data = response.body;
-
-    if (data is Map<String, dynamic>) {
-      final isResponseData = data.containsKey('successful') &&
-        data.containsKey('code') &&
-        data.containsKey('data');
-
-      if (isResponseData) {
-        return ResponseData.fromJson(data);
+    // 3. Tenta extrair mensagem de erro do body (serve para 400, 401, 404, etc)
+    String? serverMessage;
+    try {
+      if (response.body is Map<String, dynamic>) {
+        final errorData = ResponseData.fromJson(response.body);
+        // Só usamos se tiver uma mensagem válida diferente do default 'Erro desconhecido'
+        if (errorData.message.isNotEmpty && errorData.message != 'Erro desconhecido') {
+          serverMessage = errorData.message;
+        }
       }
+    } catch (_) {
+      // Falha silenciosa no parse, vamos confiar nos status codes abaixo
+    }
 
-      return ResponseData(
-        successful: false,
-        errorMessage: data['errorMessage'] ?? 'Resource not found',
-        code: data['code'] ?? 'not_found',
-      );
-    } else if (data is String) {
-      return ResponseData(
-        successful: false,
-        errorMessage: data,
-        code: 'not_found',
-      );
-    } else {
-      return ResponseData(
-        successful: false,
-        errorMessage: 'Resource not found',
-        code: 'not_found',
+    // 4. Acesso Negado (401)
+    if (response.isUnauthorized) {
+      // Prioridade: Mensagem do servidor (ex: "Senha inválida") -> Mensagem genérica
+      throw RestError(
+          response,
+          serverMessage ?? 'Sessão expirada ou credenciais inválidas.'
       );
     }
+
+    // 5. Proibido (403)
+    if (response.isForbidden) {
+      throw RestError(
+          response,
+          serverMessage ?? 'Você não tem permissão para realizar esta ação.'
+      );
+    }
+
+    // 6. Sucesso (2xx)
+    if (response.isOk || response.isCreated) {
+      if (response.body == null) {
+        return ResponseData(successful: true, code: 'OK', data: null);
+      }
+      if (response.body is Map<String, dynamic>) {
+        return ResponseData.fromJson(response.body);
+      } else {
+        return ResponseData(successful: true, code: 'OK', data: response.body);
+      }
+    }
+
+    // 7. No Content (204)
+    if (response.isNoContent) {
+      return ResponseData(successful: true, code: 'NO_CONTENT', data: null);
+    }
+
+    // 8. Outros Erros (400, 404, etc) que já extraímos a mensagem lá em cima
+    if (serverMessage != null) {
+      throw RestError(response, serverMessage);
+    }
+
+    // Fallback final
+    throw RestError(response, response.statusText ?? 'Erro na requisição (${response.statusCode})');
   }
+}
+
+/// Entrada do cache de body multipart para replay-on-401.
+/// Ver doc de `RestConnect._bodyReplayCache`.
+class _ReplayableBody {
+  final Uint8List bytes;
+  final DateTime cachedAt;
+  _ReplayableBody(this.bytes) : cachedAt = DateTime.now();
 }
