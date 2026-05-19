@@ -95,6 +95,33 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     _sessionDead = true;
   }
 
+  /// Cache de body multipart para **replay em retry pós-refresh
+  /// token (401)**.
+  ///
+  /// **Bug do `package:get` 4.7.x que esse cache corrige**: o
+  /// `MultipartFile` (usado em `FormData`) cacheia os bytes lidos
+  /// do arquivo (`_bytes`), mas expõe o conteúdo via `_stream`
+  /// que é um broadcast single-event
+  /// (`Stream.value(_bytes).asBroadcastStream()`). Quando o
+  /// `GetHttpClient._performRequest` faz retry após 401 — chamando
+  /// `handler()` de novo — o handler reusa a mesma instância
+  /// `FormData`, que reusa a mesma `MultipartFile`, que tem o
+  /// `_stream` JÁ DRENADO. `FormData._encode()` yields os
+  /// boundaries mas NADA do conteúdo do arquivo. Resultado: o
+  /// backend recebe um multipart válido porém com `file.buffer`
+  /// de **0 bytes** — erros tipo "Arquivo vazio" no servidor após
+  /// um refresh token bem-sucedido.
+  ///
+  /// **Mitigação**: bufferizamos o body drenado num cache, keyed
+  /// por `method|url`. Em chamadas subsequentes para a mesma key
+  /// dentro de 10s, se o body atual ficou **menor** que o cacheado
+  /// (sinal claro de que o file content foi perdido — boundaries
+  /// ainda estão lá mas o file não), restauramos do cache.
+  ///
+  /// TTL de 1min para evitar leak de buffers grandes. Cobre
+  /// refresh-token (~1s) com folga e nunca persiste sessões.
+  final Map<String, _ReplayableBody> _bodyReplayCache = {};
+
   RestOptions get defaultOptions =>
       RestOptions(
         timeout: const Duration(seconds: 30),
@@ -107,9 +134,46 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     httpClient.timeout =
         restOptions.timeout.orElse(const Duration(seconds: 30));
 
+    // Logging + bufferização do body multipart pra replay-on-401
+    // (ver doc do campo `_bodyReplayCache` acima). Heurística de
+    // tamanho-menor evita falsos positivos em requests JSON
+    // pequenos consecutivos pra mesma URL — drenar funciona normal
+    // para JSON; apenas `MultipartFile` tem o bug do stream cached.
     httpClient.addRequestModifier<dynamic>((request) async {
       if (kDebugMode) _logger.i('--> ${request.method} ${request.url}');
-      return request;
+
+      final cacheKey = '${request.method}|${request.url}';
+      final drained = await request.bodyBytes.toBytes();
+      final cached = _bodyReplayCache[cacheKey];
+
+      Uint8List bytes;
+      final isLikelyDrainedRetry = cached != null &&
+          drained.length < cached.bytes.length &&
+          DateTime.now().difference(cached.cachedAt) <
+              const Duration(seconds: 10);
+
+      if (isLikelyDrainedRetry) {
+        _logger.w(
+          '[REPLAY] body multipart drenado detectado em retry para '
+          '$cacheKey — restaurando ${cached.bytes.length}B do cache '
+          '(atual era ${drained.length}B).',
+        );
+        bytes = cached.bytes;
+      } else {
+        bytes = Uint8List.fromList(drained);
+        if (bytes.isNotEmpty) {
+          _bodyReplayCache[cacheKey] = _ReplayableBody(bytes);
+          Timer(
+            const Duration(minutes: 1),
+            () => _bodyReplayCache.remove(cacheKey),
+          );
+        }
+      }
+
+      return request.copyWith(
+        bodyBytes: Stream.fromIterable([bytes]),
+        contentLength: bytes.length,
+      );
     });
 
     httpClient.addResponseModifier((request, response) {
@@ -525,4 +589,12 @@ abstract class RestConnect<T extends RestContext> extends GetConnect {
     // Fallback final
     throw RestError(response, response.statusText ?? 'Erro na requisição (${response.statusCode})');
   }
+}
+
+/// Entrada do cache de body multipart para replay-on-401.
+/// Ver doc de `RestConnect._bodyReplayCache`.
+class _ReplayableBody {
+  final Uint8List bytes;
+  final DateTime cachedAt;
+  _ReplayableBody(this.bytes) : cachedAt = DateTime.now();
 }
